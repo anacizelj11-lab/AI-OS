@@ -9,6 +9,15 @@ from urllib import request as urllib_request
 
 from src.agents.base_agent import BaseAgent
 
+DEFAULT_SYSTEM_PROMPT = (
+    "VAZNO PRAVILO KOJE MORAS UVEK DA POSTUJES: "
+    "Tvoj odgovor mora imati tacno dva dela. "
+    "Prvi deo: ceo odgovor napisan na srpskom jeziku. "
+    "Zatim napisi liniju sa samo crticama: ---. "
+    "Drugi deo: isti taj odgovor preveden na engleski jezik. "
+    "Ovo pravilo vazi za svaki odgovor, bez izuzetka, cak i za kratka pitanja."
+)
+
 
 class LocalLLMAgent(BaseAgent):
     """Agent that sends a task to a local Ollama model and returns the text response."""
@@ -18,6 +27,7 @@ class LocalLLMAgent(BaseAgent):
         name: str = "LocalLLMAgent",
         model: str = "qwen3.6:27b",
         base_url: str = "http://localhost:11434",
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         timeout: float = 60.0,
     ) -> None:
         """Initialize the Ollama-backed agent.
@@ -40,6 +50,7 @@ class LocalLLMAgent(BaseAgent):
         self.model: str = model.strip()
         self.base_url: str = base_url.rstrip("/")
         self.timeout: float = timeout
+        self.system_prompt: str = system_prompt
 
     def run(self, task: Any) -> str:
         """Send a task to the local Ollama model and return the generated text."""

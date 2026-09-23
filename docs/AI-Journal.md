@@ -34,3 +34,11 @@ Danas sam napravila prve korake ka izgradnji svog AI sistema. Naučila sam kako 
 ### Sledeći korak
 
 Napraviti prvog AI agenta.
+
+## 23.9.2026.
+- pytest.ini konacno radi (testovi prolaze bez greske)
+- LocalLLMAgent povezan sa Ollama modelom qwen3.6:27b kroz kod (ne samo rucno)
+- Dodato pravilo za dvojezicni odgovor (srpski + engleski) - radi kad je uputstvo
+  u samom pitanju; system_prompt sam po sebi model ponekad ignorise kod kratkih pitanja
+- Napravljen probni fajl try_agent.py za rucno testiranje agenta
+- Sledece: povezati Orchestrator da koristi LocalLLMAgent umesto FakeAgent
