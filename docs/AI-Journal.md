@@ -50,3 +50,21 @@ Napraviti prvog AI agenta.
   na VRAM graficke (16GB). Timeout povecan na 180 sekundi kao privremeno resenje.
 - Optimizacija brzine (manji model ili GPU podesavanje) ostavljena za kasnije
 - Sledece: pametno rutiranje - Orchestrator sam bira agenta na osnovu zadatka
+
+## 25.9.2026. (nastavak)
+- Dodato pametno rutiranje u Orchestrator (route_task) - sam bira agenta
+  na osnovu kljucnih reci u zadatku (fajl/dokument -> FileAgent, ostalo -> LocalLLMAgent)
+- Napravljen FileAgent - cita tekstualne fajlove i vraca sadrzaj
+- main.py azuriran da koristi orchestrator.run() umesto rucnog run_task()
+- Testirano: FileAgent i LocalLLMAgent rade ispravno, rutiranje bira pravog agenta
+- Resen problem sa dvojezicnoscu - dodato uputstvo direktno u svaki prompt u kodu
+  (ne oslanjamo se samo na system_prompt, koji model ponekad ignorise)
+- Resen problem sa timeout-om za kompleksna pitanja - timeout povecan na 600 sekundi (10 min)
+- Probano i odbaceno: manji model (qwen3:30b-a3b) i smanjenje num_ctx - nijedno
+  nije znacajno ubrzalo rad, GPU/CPU odnos ostaje ~80/20 nezavisno od ovih izmena
+- Odluka: za sada zadrzavamo jak model (qwen3.6:27b) i duzi timeout, umesto
+  brzine. Kompleksna pitanja traju 1-5 minuta ali daju kvalitetan odgovor
+- Buduci plan: dodati cloud_agent (Claude/GPT API) za najteze zadatke, kad
+  zatreba brzina ili jos veci kvalitet - procenjena cena 5-30E mesecno za
+  umerenu upotrebu
+- Sledece: napraviti web_agent (pretraga interneta), pa test za rutiranje

@@ -28,7 +28,7 @@ class LocalLLMAgent(BaseAgent):
         model: str = "qwen3.6:27b",
         base_url: str = "http://localhost:11434",
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        timeout: float = 180.0,
+        timeout: float = 600.0,
     ) -> None:
         """Initialize the Ollama-backed agent.
 
@@ -54,11 +54,16 @@ class LocalLLMAgent(BaseAgent):
 
     def run(self, task: Any) -> str:
         """Send a task to the local Ollama model and return the generated text."""
-        prompt = self._normalize_task(task)
+        prompt = self._normalize_task(task) + " Odgovori dvojezicno: prvo na srpskom, zatim na engleskom."
+       
         payload = {
             "model": self.model,
             "prompt": prompt,
+            "system": self.system_prompt,
             "stream": False,
+            "options": {
+                "num_ctx": 8192
+            },
         }
         request = urllib_request.Request(
             f"{self.base_url}/api/generate",
