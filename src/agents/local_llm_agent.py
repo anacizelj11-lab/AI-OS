@@ -28,7 +28,7 @@ class LocalLLMAgent(BaseAgent):
         model: str = "qwen3.6:27b",
         base_url: str = "http://localhost:11434",
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        timeout: float = 60.0,
+        timeout: float = 180.0,
     ) -> None:
         """Initialize the Ollama-backed agent.
 

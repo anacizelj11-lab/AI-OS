@@ -42,3 +42,11 @@ Napraviti prvog AI agenta.
   u samom pitanju; system_prompt sam po sebi model ponekad ignorise kod kratkih pitanja
 - Napravljen probni fajl try_agent.py za rucno testiranje agenta
 - Sledece: povezati Orchestrator da koristi LocalLLMAgent umesto FakeAgent
+
+## 25.9.2026.
+- Napravljen main.py - prvi put ceo lanac TI -> Orchestrator -> LocalLLMAgent -> Ollama -> TI radi
+- Otkriven problem: model qwen3.6:27b se delimicno preliva na CPU (82% GPU / 18% CPU),
+  zbog cega odgovori traju 1-3 minuta. Verovatno zbog velicine modela (17GB) u odnosu
+  na VRAM graficke (16GB). Timeout povecan na 180 sekundi kao privremeno resenje.
+- Optimizacija brzine (manji model ili GPU podesavanje) ostavljena za kasnije
+- Sledece: pametno rutiranje - Orchestrator sam bira agenta na osnovu zadatka
