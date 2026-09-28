@@ -68,3 +68,14 @@ Napraviti prvog AI agenta.
   zatreba brzina ili jos veci kvalitet - procenjena cena 5-30E mesecno za
   umerenu upotrebu
 - Sledece: napraviti web_agent (pretraga interneta), pa test za rutiranje
+
+## 28.9.2026.
+
+- Instalirala biblioteku `ddgs` (DuckDuckGo Search) za pretragu interneta bez potrebe za API kljucem.
+- Napravljen novi agent `WebAgent` (src/agents/web_agent.py) koji pretrazuje internet i vraca top rezultate (naslov, kratak opis, link).
+- WebAgent registrovan u main.py i ukljucen u automatsko rutiranje (Orchestrator prepoznaje reci kao "pretrazi", "internet", "sajt", "pronadji online" i salje zadatak na web_agent).
+- Testirano: pretraga cene bitkoina vratila je tacne, aktuelne rezultate sa vise sajtova (coingecko, cex.io...).
+- Testirano rutiranje izmedju sva tri agenta (file_agent, web_agent, local_llm) - Orchestrator ispravno prepoznaje kom agentu treba da posalje zadatak.
+- Napomena: WebAgent i FileAgent ne prolaze kroz model, pa njihovi odgovori nisu dvojezicni (to je ocekivano, ne greska) - dvojezicnost vazi samo za LocalLLMAgent.
+- Ispravljen problem sa sporim odgovorima posle perioda neaktivnosti - dodat `keep_alive: "30m"` u LocalLLMAgent, sto drzi model ucitan u memoriji 30 minuta posle svakog poziva, umesto da se odmah izbaci iz memorije.
+- Razmotrena ideja da WebAgent prosledjuje rezultate pretrage kroz LocalLLMAgent radi dvojezicnog sazetka - odluceno da se za sada ostave sirovi rezultati (tacnije i brze za cinjenice/brojeve kao sto su cene), a sazimanje ostaviti za kasnije, za istrazivacke zadatke gde je to korisnije.

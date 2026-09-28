@@ -61,6 +61,7 @@ class LocalLLMAgent(BaseAgent):
             "prompt": prompt,
             "system": self.system_prompt,
             "stream": False,
+            "keep_alive": "30m",
             "options": {
                 "num_ctx": 8192
             },

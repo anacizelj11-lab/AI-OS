@@ -1,10 +1,12 @@
 from src.core.orchestrator import Orchestrator
 from src.agents.local_llm_agent import LocalLLMAgent
 from src.agents.file_agent import FileAgent
+from src.agents.web_agent import WebAgent
 
 orchestrator = Orchestrator()
 orchestrator.register_agent("local_llm", LocalLLMAgent())
 orchestrator.register_agent("file_agent", FileAgent())
+orchestrator.register_agent("web_agent", WebAgent())
 
 print("AI-OS je pokrenut. Ukucaj 'kraj' za izlaz.")
 
