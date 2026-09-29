@@ -79,3 +79,11 @@ Napraviti prvog AI agenta.
 - Napomena: WebAgent i FileAgent ne prolaze kroz model, pa njihovi odgovori nisu dvojezicni (to je ocekivano, ne greska) - dvojezicnost vazi samo za LocalLLMAgent.
 - Ispravljen problem sa sporim odgovorima posle perioda neaktivnosti - dodat `keep_alive: "30m"` u LocalLLMAgent, sto drzi model ucitan u memoriji 30 minuta posle svakog poziva, umesto da se odmah izbaci iz memorije.
 - Razmotrena ideja da WebAgent prosledjuje rezultate pretrage kroz LocalLLMAgent radi dvojezicnog sazetka - odluceno da se za sada ostave sirovi rezultati (tacnije i brze za cinjenice/brojeve kao sto su cene), a sazimanje ostaviti za kasnije, za istrazivacke zadatke gde je to korisnije.
+
+## 29.9.2026.
+
+- Dodata AI podrska za sastavljanje email-a: umesto rucnog kucanja, AI (lokalni model) sada moze da napise nacrt teksta na osnovu kratkog opisa.
+- Dodata mogucnost izbora jezika (srpski / engleski / oba) za AI predlog teksta.
+- Ispravljeno vise problema: AI vise ne odgovara kao da je on primalac poruke, vec pise email u ime korisnika; ne menja pravopis imena i prezimena; ne dodaje markdown formatiranje; ne prelama recenice usred reda; ima ispravnu strukturu (pozdrav, tekst, zavrsni pozdrav, potpis).
+- Testirano slanje pravog email-a - uspesno.
+- Sledeci koraci: mogucnost rucne izmene AI predloga pre slanja, pregled mogucnosti web_agent-a za istrazivanje i izvestaje.
