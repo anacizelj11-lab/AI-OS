@@ -12,8 +12,11 @@ from googleapiclient.discovery import build
 
 from src.agents.base_agent import BaseAgent
 
-# Dozvola samo za citanje email-ova (ne za slanje ili brisanje)
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Dozvola za citanje i slanje email-ova (slanje uvek uz potvrdu korisnika)
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+]
 
 
 class EmailAgent(BaseAgent):
@@ -79,3 +82,26 @@ class EmailAgent(BaseAgent):
 
         except Exception as exc:
             return f"Greska pri citanju email-a: {exc}"
+
+    def send_email(self, to: str, subject: str, body: str) -> str:
+        """Posalji email. Poziva se TEK nakon potvrde korisnika."""
+        try:
+            import base64
+            from email.mime.text import MIMEText
+
+            creds = self._authenticate()
+            service = build("gmail", "v1", credentials=creds)
+
+            message = MIMEText(body)
+            message["to"] = to
+            message["subject"] = subject
+            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+            service.users().messages().send(
+                userId="me", body={"raw": raw}
+            ).execute()
+
+            return f"Email uspesno poslat na {to}."
+
+        except Exception as exc:
+            return f"Greska pri slanju email-a: {exc}"
