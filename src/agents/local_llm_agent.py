@@ -52,14 +52,23 @@ class LocalLLMAgent(BaseAgent):
         self.timeout: float = timeout
         self.system_prompt: str = system_prompt
 
-    def run(self, task: Any) -> str:
+    def run(self, task: Any, language: str | None = None) -> str:
         """Send a task to the local Ollama model and return the generated text."""
-        prompt = self._normalize_task(task) + " Odgovori dvojezicno: prvo na srpskom, zatim na engleskom."
+        if language == "sr":
+            uputstvo = " Odgovori samo na srpskom jeziku."
+            sistem_uputstvo = "Odgovaraj iskljucivo na srpskom jeziku. Ne prevodi odgovor na engleski, ne pisi dva dela."
+        elif language == "en":
+            uputstvo = " Odgovori samo na engleskom jeziku."
+            sistem_uputstvo = "Answer only in English. Do not translate into Serbian, do not write two parts."
+        else:
+            uputstvo = " Odgovori dvojezicno: prvo na srpskom, zatim na engleskom."
+            sistem_uputstvo = self.system_prompt
+        prompt = self._normalize_task(task) + uputstvo
        
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "system": self.system_prompt,
+            "system": sistem_uputstvo,
             "stream": False,
             "keep_alive": "30m",
             "options": {
