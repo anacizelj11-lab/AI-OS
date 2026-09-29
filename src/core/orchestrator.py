@@ -21,11 +21,14 @@ class Orchestrator:
 
         file_keywords = ["fajl", "dokument", "procitaj", "sacuvaj u fajl"]
         web_keywords = ["pretrazi", "internet", "sajt", "pronadji online"]
+        email_keywords = ["email", "mejl", "posta", "pošta", "inbox", "nepročitano", "nepoznato"]
 
         if any(word in text for word in file_keywords):
             return "file_agent"
         if any(word in text for word in web_keywords):
             return "web_agent"
+        if any(word in text for word in email_keywords):
+            return "email_agent"
 
         return "local_llm"
 

@@ -2,3 +2,4 @@ memory.json
 profile.json
 __pycache__/
 gmail_credentials.json
+token.json
