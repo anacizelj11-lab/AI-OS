@@ -25,7 +25,7 @@ class LocalLLMAgent(BaseAgent):
     def __init__(
         self,
         name: str = "LocalLLMAgent",
-        model: str = "qwen3.6:27b",
+        model: str = "mistral-small",
         base_url: str = "http://localhost:11434",
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         timeout: float = 600.0,
@@ -71,9 +71,10 @@ class LocalLLMAgent(BaseAgent):
             "system": sistem_uputstvo,
             "stream": False,
             "keep_alive": "30m",
-            "options": {
-                "num_ctx": 8192
-            },
+             "options": {
+                "num_ctx": 8192,
+                "temperature": 0.3
+            }
         }
         request = urllib_request.Request(
             f"{self.base_url}/api/generate",

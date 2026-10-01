@@ -60,19 +60,34 @@ while True:
                     linije_teksta.append(linija)
                 tekst = "\n".join(linije_teksta)
 
-            print("\n--- PREGLED EMAIL-A ---")
-            print(f"Kome: {primalac}")
-            print(f"Naslov: {naslov}")
-            print(f"Tekst:\n{tekst}")
-            print("-----------------------")
-            potvrda = input("Da li da posaljem ovaj email? (da/ne): ")
+            while True:
+                print("\n--- PREGLED EMAIL-A ---")
+                print(f"Kome: {primalac}")
+                print(f"Naslov: {naslov}")
+                print(f"Tekst:\n{tekst}")
+                print("-----------------------")
+                potvrda = input("Da li da posaljem ovaj email? (da/ne/izmeni): ")
 
-            if potvrda.lower() == "da":
-                email_agent = orchestrator.agents["email_agent"]
-                rezultat = email_agent.send_email(primalac, naslov, tekst)
-                print("AI-OS:", rezultat)
-            else:
-                print("AI-OS: Email nije poslat.")
+                if potvrda.lower() == "da":
+                    email_agent = orchestrator.agents["email_agent"]
+                    rezultat = email_agent.send_email(primalac, naslov, tekst)
+                    print("AI-OS:", rezultat)
+                    break
+                elif potvrda.lower() == "izmeni":
+                    izmena = input("Sta da izmenim? (ukratko opisi): ")
+                    uputstvo_za_izmenu = (
+                        f"Ovo je prethodni nacrt email-a:\n{tekst}\n\n"
+                        f"Primeni sledece izmene na ovaj email: {izmena}\n"
+                        f"Vrati ceo ispravljen tekst email-a. "
+                        f"Ne koristi markdown formatiranje. Ne dodavaj naslov na pocetku. "
+                        f"Pisi u kontinuitetu bez rucnog prelamanja redova usred recenice. "
+                        f"Zadrzi strukturu: pozdrav, tekst, zavrsni pozdrav, ime i prezime."
+                    )
+                    tekst = local_llm.run(uputstvo_za_izmenu, language=jezik)
+                else:
+                    print("AI-OS: Email nije poslat.")
+                    break
             continue
+           
     odgovor = orchestrator.run(zadatak)
     print("AI-OS:", odgovor)
