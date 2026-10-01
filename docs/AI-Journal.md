@@ -87,3 +87,13 @@ Napraviti prvog AI agenta.
 - Ispravljeno vise problema: AI vise ne odgovara kao da je on primalac poruke, vec pise email u ime korisnika; ne menja pravopis imena i prezimena; ne dodaje markdown formatiranje; ne prelama recenice usred reda; ima ispravnu strukturu (pozdrav, tekst, zavrsni pozdrav, potpis).
 - Testirano slanje pravog email-a - uspesno.
 - Sledeci koraci: mogucnost rucne izmene AI predloga pre slanja, pregled mogucnosti web_agent-a za istrazivanje i izvestaje.
+
+## 1.10.2026.
+
+- Nadogradjena Ollama verzija (0.34.4 -> 0.35.0).
+- Preuzet novi lokalni model mistral-small (24B) i podesen kao podrazumevani model u LocalLLMAgent-u, umesto qwen3.6:27b - cilj: manje izmisljenih reci/fraza u srpskom tekstu i brzi odgovori.
+- Dodata opcija "izmeni" pri slanju email-a: pored da/ne, sada moze da se zatrazi ispravka AI predloga teksta (npr. "ukloni poslednju recenicu", "promeni pozdrav") - ispravka se saljе nazad kroz AI zajedno sa prethodnim nacrtom, umesto da se trazi rucno pisanje celog teksta.
+- Testirano: mistral-small daje znatno bolji, gramaticki ispravniji tekst na srpskom nego qwen3.6:27b. "Izmeni" opcija radi ispravno kada je instrukcija konkretna i jasna (npr. "obrisi poslednji pasus") - kod opstijih instrukcija AI ne pogodi uvek tacno sta treba da promeni.
+- Obrisani stari modeli (qwen3.6:27b, qwen3:30b-a3b) radi oslobadjanja prostora na disku, nakon potvrde da mistral-small radi dobro.
+- Testirano slanje pravog email-a sa izmenjenim nacrtom - uspesno.
+- Sledeci koraci: dalje doterivanje "izmeni" opcije (konkretnije instrukcije daju bolje rezultate); mogucnost da agent cita primljeni email i sastavi odgovor na osnovu njegovog sadrzaja i korisnikovih instrukcija; pregled mogucnosti web_agent-a za istrazivanje i izvestaje.
