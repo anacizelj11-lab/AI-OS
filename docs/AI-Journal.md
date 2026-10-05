@@ -97,3 +97,14 @@ Napraviti prvog AI agenta.
 - Obrisani stari modeli (qwen3.6:27b, qwen3:30b-a3b) radi oslobadjanja prostora na disku, nakon potvrde da mistral-small radi dobro.
 - Testirano slanje pravog email-a sa izmenjenim nacrtom - uspesno.
 - Sledeci koraci: dalje doterivanje "izmeni" opcije (konkretnije instrukcije daju bolje rezultate); mogucnost da agent cita primljeni email i sastavi odgovor na osnovu njegovog sadrzaja i korisnikovih instrukcija; pregled mogucnosti web_agent-a za istrazivanje i izvestaje.
+
+## 5.10.2026.
+
+Danas smo radili na "istrazi" komandi (dubinsko istrazivanje preko interneta):
+- Dodata nova komanda "istrazi" u main.py koja koristi WebAgent + lokalni AI da napravi izvestaj o nekoj temi
+- Prosirena da radi vise pretraga odjednom umesto samo jedne
+- AI sada sam smislja pametne upite za pretragu na osnovu pitanja, umesto fiksne seme
+- Dodato pravilo da se automatski bira jezik pretrage (srpski za Srbiju, engleski za svet/globalne teme) za bolje rezultate
+- Zakljucak: pretraga sada daje mnogo bolje rezultate sa stvarnim brojevima i izvorima, ali konkretni kontakti kompanija/dobavljaca se i dalje retko nalaze na internetu - za to ce biti potrebno direktno slanje email upita dobavljacima (sledeci veliki korak)
+
+Sledeci koraci: probati slanje email upita dobavljacu za konkretnu ponudu.
