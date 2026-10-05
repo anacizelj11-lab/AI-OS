@@ -89,5 +89,61 @@ while True:
                     break
             continue
            
+    if zadatak.lower().startswith("istrazi"):
+        tema = input("Sta da istrazim u dubinu (npr. proizvod, cena, dobavljaci)? ")
+
+        web_agent = orchestrator.agents["web_agent"]
+        local_llm = orchestrator.agents["local_llm"]
+
+        uputstvo_za_upite = (
+            f"Korisnik zeli dubinsko istrazivanje na internetu o sledecoj temi:\n"
+            f"'{tema}'\n\n"
+            f"Napravi 4 kratka, precizna upita za pretragu interneta (stil kao za Google pretragu) "
+            f"koji bi pokrili RAZLICITE aspekte ove teme (npr. opsta trziste/cene, konkretni brojevi "
+            f"i statistika, imena i kontakti kompanija/proizvodjaca/uzgajivaca ako se pominju u temi). "
+            f"Kada trazis kompanije, proizvodjace ili uzgajivace, koristi fraze tipa 'top exporting "
+            f"companies list', 'leading producers ranking', 'list of' - takve fraze obicno pronalaze "
+            f"prave liste i imena kompanija, za razliku od opstih pojmova. "
+            f"Ako se tema odnosi na Srbiju, napisi upite na srpskom jeziku. Ako se tema odnosi na "
+            f"svet/globalno ili ne pominje konkretnu zemlju, napisi upite na engleskom jeziku jer ce "
+            f"to dati bolje globalne rezultate. "
+            f"Svaki upit napisi u svom redu, bez numerisanja, bez dodatnih objasnjenja - samo sami "
+            f"upiti za pretragu."
+        )
+        predlog_upita = local_llm.run(uputstvo_za_upite, language=None)
+        upiti = [linija.strip() for linija in predlog_upita.split("\n") if linija.strip()]
+
+        svi_rezultati = []
+        for upit in upiti:
+            rezultat_pretrage = web_agent.run(upit)
+            svi_rezultati.append(f"### Rezultati za upit: '{upit}'\n{rezultat_pretrage}")
+
+        sirovi_rezultati = "\n\n".join(svi_rezultati)
+
+        jezik_izbor = input("Na kom jeziku da napravim izvestaj? (srpski/engleski/enter za oba): ")
+        if jezik_izbor.lower() == "srpski":
+            jezik = "sr"
+        elif jezik_izbor.lower() == "engleski":
+            jezik = "en"
+        else:
+            jezik = None
+
+        uputstvo_za_izvestaj = (
+            f"Na osnovu sledecih sirovih rezultata pretrage interneta, napravi detaljan i dubok "
+            f"izvestaj o temi: '{tema}'.\n\n"
+            f"Sirovi rezultati pretrage:\n{sirovi_rezultati}\n\n"
+            f"Izvestaj treba da sadrzi: kratak opis teme, kljucne cinjenice i brojeve (cene, kolicine, "
+            f"nazive kompanija/proizvodjaca/uzgajivaca i njihove kontakte ako se pominju), i na kraju "
+            f"listu izvora (linkova) koje si koristila. Obradi SVE delove teme koje je korisnik naveo - "
+            f"ne preskaci nijedan deo pitanja. Ne izmisljaj podatke koji nisu u rezultatima pretrage - "
+            f"ako nesto nije pronadjeno, jasno to navedi. Ne koristi markdown formatiranje (zvezdice, "
+            f"tarabe), pisi obican tekst."
+        )
+        izvestaj = local_llm.run(uputstvo_za_izvestaj, language=jezik)
+
+        print("\n--- IZVESTAJ ---")
+        print(izvestaj)
+        print("----------------")
+        continue
     odgovor = orchestrator.run(zadatak)
     print("AI-OS:", odgovor)
