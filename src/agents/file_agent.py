@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from datetime import datetime
+
+from fpdf import FPDF
 
 from src.agents.base_agent import BaseAgent
 
@@ -39,3 +42,24 @@ class FileAgent(BaseAgent):
             if "." in word and ("/" in word or "\\" in word or word.count(".") == 1):
                 return word.strip('",.')
         return None
+
+    def napravi_pdf_izvestaj(self, naslov: str, sadrzaj: str, folder: str = "izvestaji_sajtova") -> str:
+        """Napravi PDF izvestaj od teksta i sacuvaj ga u poseban folder."""
+        folder_path = Path(folder)
+        folder_path.mkdir(parents=True, exist_ok=True)
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.add_font("Arial", "", "C:/Windows/Fonts/arial.ttf", uni=True)
+        pdf.set_font("Arial", size=14)
+        pdf.multi_cell(0, 10, naslov)
+        pdf.ln(5)
+
+        pdf.set_font("Arial", size=11)
+        pdf.multi_cell(0, 8, sadrzaj)
+
+        datum = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        naziv_fajla = folder_path / f"izvestaj_{datum}.pdf"
+        pdf.output(str(naziv_fajla))
+
+        return str(naziv_fajla)

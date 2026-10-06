@@ -89,6 +89,61 @@ while True:
                     break
             continue
            
+    if zadatak.lower().startswith("procitaj sajt"):
+        link = input("Koji link da procitam? ")
+
+        web_agent = orchestrator.agents["web_agent"]
+        local_llm = orchestrator.agents["local_llm"]
+
+        print("\nOtvaram sajt...")
+        tekst_sa_sajta = web_agent.procitaj_sajt(link)
+
+        if tekst_sa_sajta.startswith("Greska"):
+            print(f"AI-OS: {tekst_sa_sajta}")
+            continue
+
+        podaci = web_agent.izvuci_kontakt_i_cene(tekst_sa_sajta)
+        pouzdanost = web_agent.oceni_pouzdanost(link)
+
+        uputstvo_za_sajt = (
+            f"Dobila si sirov tekst procitan sa sajta '{link}'. Organizuj ga u jasan pregled.\n\n"
+            f"Tekst sa sajta:\n{tekst_sa_sajta[:6000]}\n\n"
+            f"Pregled treba da sadrzi: cime se kompanija bavi (kratak opis), koje proizvode/usluge nudi, "
+            f"cene ako se pominju (sa kontekstom - ne izvlaci nasumicne brojeve), uslove saradnje/isporuke "
+            f"ako se pominju, i kontakt informacije ako postoje. Za svaku stavku koja NIJE pronadjena u "
+            f"tekstu, jasno napisi 'nije pronadjeno na sajtu' - ne izmisljaj podatke. Ne koristi markdown "
+            f"formatiranje (zvezdice, tarabe), pisi obican tekst."
+        )
+        pregled = local_llm.run(uputstvo_za_sajt, language=None)
+
+        print("\n--- PREGLED SAJTA (AI) ---")
+        print(pregled)
+        print("---------------------------")
+
+        print(f"\nPouzdanost izvora: {pouzdanost}")
+        print(f"Pronadjeni email-ovi (automatski): {podaci['emailovi']}")
+        print(f"Pronadjeni telefoni (automatski): {podaci['telefoni']}")
+
+        sacuvaj_pdf = input("\nDa li da sacuvam ovaj izvestaj kao PDF? (da/ne): ")
+            
+        if sacuvaj_pdf.lower() == "da":
+                file_agent = orchestrator.agents["file_agent"]
+                naslov = f"Izvestaj o sajtu: {link}"
+                sadrzaj_za_pdf = (
+                    f"{pregled}\n\n"
+                    f"Pouzdanost izvora: {pouzdanost}\n"
+                    f"Pronadjeni email-ovi: {podaci['emailovi']}\n"
+                    f"Pronadjeni telefoni: {podaci['telefoni']}"
+                )
+                putanja = file_agent.napravi_pdf_izvestaj(naslov, sadrzaj_za_pdf)
+                print(f"Sacuvano: {putanja}")
+
+        preuzmi = input("\nDa li da pokusam da preuzmem PDF/Excel/CSV fajlove sa ovog sajta? (da/ne): ")
+        if preuzmi.lower() == "da":
+            preuzeti_fajlovi = web_agent.preuzmi_fajlove(link)
+            print(f"Preuzeti fajlovi: {preuzeti_fajlovi}")
+
+        continue
     if zadatak.lower().startswith("istrazi"):
         tema = input("Sta da istrazim u dubinu (npr. proizvod, cena, dobavljaci)? ")
 
