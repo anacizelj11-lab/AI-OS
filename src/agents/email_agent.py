@@ -105,3 +105,75 @@ class EmailAgent(BaseAgent):
 
         except Exception as exc:
             return f"Greska pri slanju email-a: {exc}"
+
+    def procitaj_ponude(self, label: str = "Ponude-AIOS") -> list[dict]:
+        """Procitaj sve mejlove sa zadatim labelom (podrazumevano 'Ponude-AIOS')."""
+        try:
+            creds = self._authenticate()
+            service = build("gmail", "v1", credentials=creds)
+
+            labels_result = service.users().labels().list(userId="me").execute()
+            label_id = None
+            for lbl in labels_result.get("labels", []):
+                if lbl["name"].lower() == label.lower():
+                    label_id = lbl["id"]
+                    break
+
+            if label_id is None:
+                return []
+
+            results = (
+                service.users()
+                .messages()
+                .list(userId="me", labelIds=[label_id], maxResults=20)
+                .execute()
+            )
+            messages = results.get("messages", [])
+
+            ponude = []
+            for msg in messages:
+                msg_data = (
+                    service.users()
+                    .messages()
+                    .get(userId="me", id=msg["id"], format="full")
+                    .execute()
+                )
+                headers = msg_data.get("payload", {}).get("headers", [])
+                subject = next((h["value"] for h in headers if h["name"] == "Subject"), "(bez naslova)")
+                sender = next((h["value"] for h in headers if h["name"] == "From"), "(nepoznat posiljalac)")
+                datum = next((h["value"] for h in headers if h["name"] == "Date"), "")
+
+                telo = self._izvuci_telo(msg_data.get("payload", {}))
+
+                ponude.append({
+                    "posiljalac": sender,
+                    "naslov": subject,
+                    "datum": datum,
+                    "telo": telo,
+                })
+
+            return ponude
+
+        except Exception as exc:
+            return [{"greska": f"Greska pri citanju ponuda: {exc}"}]
+
+    def _izvuci_telo(self, payload: dict) -> str:
+        """Pomocna funkcija: izvuci citljiv tekst iz Gmail poruke."""
+        import base64
+
+        if payload.get("mimeType") == "text/plain" and "data" in payload.get("body", {}):
+            data = payload["body"]["data"]
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+
+        for part in payload.get("parts", []) or []:
+            if part.get("mimeType") == "text/plain" and "data" in part.get("body", {}):
+                data = part["body"]["data"]
+                return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+
+        for part in payload.get("parts", []) or []:
+            if part.get("parts"):
+                rezultat = self._izvuci_telo(part)
+                if rezultat:
+                    return rezultat
+
+        return "(nije pronadjen tekst poruke)"    

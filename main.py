@@ -3,11 +3,13 @@ from src.agents.local_llm_agent import LocalLLMAgent
 from src.agents.file_agent import FileAgent
 from src.agents.web_agent import WebAgent
 from src.agents.email_agent import EmailAgent
+from src.agents.offer_agent import OfferAgent
 
 orchestrator = Orchestrator()
 orchestrator.register_agent("local_llm", LocalLLMAgent())
 orchestrator.register_agent("file_agent", FileAgent())
 orchestrator.register_agent("web_agent", WebAgent())
+orchestrator.register_agent("offer_agent", OfferAgent())
 orchestrator.register_agent("email_agent", EmailAgent())
 
 print("AI-OS je pokrenut. Ukucaj 'kraj' za izlaz.")
@@ -144,6 +146,80 @@ while True:
             print(f"Preuzeti fajlovi: {preuzeti_fajlovi}")
 
         continue
+    if zadatak.lower().startswith("trazi ponudu"):
+            proizvod = input("Za koji proizvod/uslugu da trazim ponudu? ")
+            kolicina = input("Kolicina (ili samo Enter ako nije vazno): ")
+            dodatni_zahtevi = input("Dodatni zahtevi (ili samo Enter): ")
+
+            web_agent = orchestrator.agents["web_agent"]
+            local_llm = orchestrator.agents["local_llm"]
+            email_agent = orchestrator.agents["email_agent"]
+            offer_agent = orchestrator.agents["offer_agent"]
+
+            print("\nTrazim dobavljace na internetu i izvlacim njihove kontakte...")
+            dobavljaci = offer_agent.pronadji_dobavljace(web_agent, local_llm,proizvod)
+
+            dobavljaci_sa_email = [d for d in dobavljaci if d.get("emailovi")]
+
+            print(f"\nPronadjeno dobavljaca: {len(dobavljaci)}, od toga sa email adresom: {len(dobavljaci_sa_email)}")
+
+            if not dobavljaci_sa_email:
+                print("AI-OS: Nijedan pronadjeni dobavljac nema email na sajtu. Probaj drugaciji proizvod ili pretragu.")
+                continue
+
+            poslati_dobavljaci = []
+
+            for d in dobavljaci_sa_email:
+                email_dobavljaca = d["emailovi"][0]
+                print(f"\n--- DOBAVLJAC: {d.get('naziv', '')} ({d.get('sajt', '')}) ---")
+                print(f"Email: {email_dobavljaca}")
+
+                print("\nSastavljam upit za ponudu...")
+                tekst_upita = offer_agent.sastavi_upit(local_llm, d, proizvod, kolicina, dodatni_zahtevi)
+
+                print("\n--- PREDLOG UPITA ---")
+                print(tekst_upita)
+                print("---------------------")
+
+                potvrda = input(f"\nDa li da posaljem ovaj upit na {email_dobavljaca}? (da/ne/izmeni): ")
+
+                if potvrda.lower() == "izmeni":
+                    tekst_upita = input("Unesi novi tekst upita: ")
+                    potvrda = "da"
+
+                if potvrda.lower() == "da":
+                    rezultat = email_agent.send_email(email_dobavljaca, f"Upit za ponudu: {proizvod}", tekst_upita)
+                    print(f"AI-OS: {rezultat}")
+                    poslati_dobavljaci.append(d)
+                else:
+                    print("AI-OS: Upit ovom dobavljacu nije poslat.")
+
+            if not poslati_dobavljaci:
+                print("\nAI-OS: Nijedan upit nije poslat.")
+                continue
+
+            input("\nKada stignu odgovori na email, pritisni Enter da procitamo ponude...")
+
+            print("\nCitam pristigle ponude...")
+            ponude = email_agent.procitaj_ponude(label="Ponude-AIOS")
+
+            if not ponude:
+                print("AI-OS: Nijedna ponuda jos nije pronadjena pod labelom 'Ponude-AIOS'.")
+                continue
+
+            print(f"\nPronadjeno ponuda: {len(ponude)}")
+
+            print("\nUporedjujem ponude...")
+            preporuka = offer_agent.uporedi_ponude(local_llm, ponude)
+
+            print("\n--- PREPORUKA ---")
+            print(preporuka)
+            print("-----------------")
+
+            offer_agent.sacuvaj_istoriju(proizvod, ponude, preporuka)
+            print("\nAI-OS: Istorija ponuda je sacuvana.")
+
+            continue
     if zadatak.lower().startswith("istrazi"):
         tema = input("Sta da istrazim u dubinu (npr. proizvod, cena, dobavljaci)? ")
 

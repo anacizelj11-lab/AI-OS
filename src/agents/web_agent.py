@@ -74,6 +74,39 @@ class WebAgent(BaseAgent):
             "cene": cene[:10],
         }
 
+    def pretrazi_dobavljace(self, upit: str, broj_rezultata: int = 5) -> list[dict]:
+            """Pretrazi internet za dobavljace i za svaki pronadjeni sajt izvuci kontakt i opis."""
+            try:
+                results = list(DDGS().text(upit, max_results=broj_rezultata))
+            except Exception as exc:
+                return [{"greska": f"Greska pri pretrazi interneta: {exc}"}]
+
+            dobavljaci = []
+            for r in results:
+                naziv = r.get("title", "Bez naslova")
+                url = r.get("href", "")
+                opis = r.get("body", "")
+
+                if not url:
+                    continue
+
+                tekst_sajta = self.procitaj_sajt(url)
+                if tekst_sajta.startswith("Greska"):
+                    podaci = {"emailovi": [], "telefoni": [], "cene": []}
+                else:
+                    podaci = self.izvuci_kontakt_i_cene(tekst_sajta)
+
+                dobavljaci.append({
+                    "naziv": naziv,
+                    "sajt": url,
+                    "opis": opis,
+                    "tekst_sajta": tekst_sajta[:3000],
+                    "emailovi": podaci.get("emailovi", []),
+                    "telefoni": podaci.get("telefoni", []),
+                    "pouzdanost": self.oceni_pouzdanost(url),
+                })
+
+            return dobavljaci
     def preuzmi_fajlove(self, url: str, folder: str = "preuzeto") -> list:
         """Pronalazi linkove ka PDF/cenovnik fajlovima na stranici i preuzima ih na disk."""
         try:

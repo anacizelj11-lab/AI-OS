@@ -108,3 +108,28 @@ Danas smo radili na "istrazi" komandi (dubinsko istrazivanje preko interneta):
 - Zakljucak: pretraga sada daje mnogo bolje rezultate sa stvarnim brojevima i izvorima, ali konkretni kontakti kompanija/dobavljaca se i dalje retko nalaze na internetu - za to ce biti potrebno direktno slanje email upita dobavljacima (sledeci veliki korak)
 
 Sledeci koraci: probati slanje email upita dobavljacu za konkretnu ponudu.
+
+## 6.10.2026.
+
+Danas smo radili na EmailAgent-u i novom OfferAgent-u:
+- Dodata mogucnost EmailAgent-u da cita pristigle mejlove sa posebnom Gmail oznakom "Ponude-AIOS" (read-only, bezbedno ogranicen pristup)
+- Napravljen nov agent: OfferAgent - trazi dobavljace preko WebAgent-a, sastavlja upit za ponudu preko lokalnog AI-a, poredi pristigle ponude i cuva istoriju u memory.json
+- Registrovan OfferAgent u main.py
+- Greska: offer_agent.py je slucajno napravljen u pogresnom folderu, sto je izazvalo ModuleNotFoundError pri pokretanju
+
+## 7.10.2026.
+
+Nastavljeno sa OfferAgent-om, veliki napredak ali i otkriveno nekoliko stvarnih problema:
+- Ispravljena lokacija fajla offer_agent.py - program se pokrece bez greske
+- Dodata nova komanda "trazi ponudu" u main.py sa celim tokom: trazenje dobavljaca, slanje upita, citanje odgovora, poredjenje ponuda, cuvanje istorije
+- Dodata funkcija WebAgent-u (pretrazi_dobavljace) koja sama pretrazuje internet, ulazi na svaki sajt i izvlaci email/telefon/sadrzaj - automatski, bez rucnog unosa email-a
+- OfferAgent sada koristi stvarni sadrzaj sajta dobavljaca (ne samo kratak opis iz pretrage) da sastavi prilagodjen email
+- Dodato da OfferAgent pravi vise razlicitih upita za pretragu (kao kod "istrazi") i sam bira jezik (srpski/engleski) prema temi
+- Testirano uzivo nekoliko puta - svaki put popravljena po jedna greska (dupli manuelni unos email-a, pogresan jezik pretrage, upit koji ne koristi pravi sadrzaj sajta)
+
+Otkriveni problemi koji ostaju za sledeci put:
+- Opsta internet pretraga uglavnom nalazi prodavnice/posrednike, ne prave proizvodjace/uzgajivace - treba pretrazivati specijalizovane B2B direktorijume (Alibaba, Made-in-China, ThomasNet, Europages i slicno) umesto opsteg interneta
+- Bag: posle "trazi ponudu" kad se svi dobavljaci odbiju, komanda "kraj" ne gasi program kako treba - treba istraziti
+- Povremeno se u predlogu email-a pojavljuje dupli tekst (srpski pa engleski) - jezik treba doraditi
+
+Dogovoreno: ne prelazimo na sledeci projekat (npr. BookAgent) dok OfferAgent ne pronalazi prave proizvodjace/uzgajivace kako treba.
