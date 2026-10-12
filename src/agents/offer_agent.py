@@ -15,33 +15,118 @@ class OfferAgent(BaseAgent):
 
     def __init__(self, name: str = "OfferAgent") -> None:
         super().__init__(name=name)
+    def pronadji_direktorijume(self, local_llm, proizvod: str) -> list[str]:
+        """Pita LLM koji B2B direktorijumi/platforme najbolje odgovaraju ovoj kategoriji proizvoda."""
+        uputstvo = (
+            f"Korisnik trazi PRAVE proizvodjace/uzgajivace (ne preprodavce) za: {proizvod}.\n"
+            "Navedi 3 najbolja specijalizovana B2B direktorijuma/platforme ili sektorska udruzenja/izvozne "
+            "direktorijume na kojima se mogu pronaci pravi proizvodjaci/uzgajivaci ove robe sa kontaktima "
+            "(npr. Alibaba, Made-in-China, ThomasNet, Europages, Kompass, ili neki industrijski specificni "
+            "direktorijum/udruzenje ako postoji za ovu vrstu robe). "
+            "Vrati SAMO gole domene (npr. alibaba.com), jedan po redu, bez https://, bez www, bez "
+            "objasnjenja, bez numerisanja."
+        )
+        odgovor = local_llm.run(uputstvo, language=None)
+        domeni = [
+            red.strip().lower().replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+            for red in odgovor.split("\n") if red.strip()
+        ]
+        return domeni[:3]
+    
+    def pronadji_zemlje(self, local_llm, proizvod: str) -> list[str]:
+        """Pita LLM koje su zemlje/regioni najpoznatiji po proizvodnji/uzgoju ovog proizvoda."""
+        uputstvo = (
+            f"Korisnik trazi proizvodjace/uzgajivace za: {proizvod}.\n"
+            "Navedi 5 zemalja/regiona koji su NAJPOZNATIJI i NAJVECI proizvodjaci/izvoznici ove "
+            "robe u svetu. Vrati SAMO imena zemalja, jedno po redu, bez objasnjenja, bez numerisanja."
+        )
+        odgovor = local_llm.run(uputstvo, language=None)
+        zemlje = [red.strip() for red in odgovor.split("\n") if red.strip()]
+        return zemlje[:5]
+    def opisi_dobavljaca(self, local_llm, dobavljac: dict, proizvod: str) -> dict:
+        """Zamoli LLM da iz sadrzaja sajta izvuce zemlju porekla i kratak opis karakteristika firme."""
+        sadrzaj = dobavljac.get("tekst_sajta", "") or dobavljac.get("opis", "")
+        uputstvo = (
+            f"Evo sadrzaja sa sajta/profila firme '{dobavljac.get('naziv','')}':\n{sadrzaj[:2000]}\n\n"
+            f"Korisnik trazi: {proizvod}.\n"
+            "Na osnovu ovog sadrzaja, odgovori u DVA kratka reda, tacno u ovom formatu:\n"
+            "Zemlja: <zemlja porekla firme, ili 'nepoznato' ako se ne pominje>\n"
+            "Opis: <jedna kratka recenica o tome sta firma nudi/koje su karakteristike, ili 'nema dovoljno informacija'>"
+        )
+        odgovor = local_llm.run(uputstvo, language=None)
+        zemlja = "nepoznato"
+        opis = "nema dovoljno informacija"
+        for red in odgovor.split("\n"):
+            if red.lower().startswith("zemlja:"):
+                zemlja = red.split(":", 1)[1].strip()
+            elif red.lower().startswith("opis:"):
+                opis = red.split(":", 1)[1].strip()
+        return {"zemlja": zemlja, "opis_karakteristika": opis}
 
     def pronadji_dobavljace(self, web_agent, local_llm, proizvod: str) -> list[dict]:
-            """Pronadji dobavljace preko vise razlicitih upita, za bolju i raznovrsniju pokrivenost."""
-            uputstvo = (
-                f"Korisnik trazi dobavljace za: {proizvod}.\n"
-                "Napravi 3 razlicita kratka upita za pretragu interneta da nadjemo sto raznovrsnije i konkretnije "
-                "dobavljace/firme i njihove kontakte - npr. jedan opstiji upit, jedan fokusiran na konkretne "
-                "zemlje/regione poznate po toj robi, jedan fokusiran na izvozne/trgovinske kompanije. "
-                "Ako se trazeni proizvod odnosi na Srbiju ili lokalno trziste, napisi upite na srpskom. Ako "
-                "korisnik izricito trazi dobavljace 'u svetu', globalno, medjunarodno, ili ako se radi o robi "
-                "koja se uobicajeno uvozi/ne proizvodi se u Srbiji, napisi upite na ENGLESKOM jeziku jer to "
-                "daje bolje globalne rezultate. Vrati SAMO 3 upita, svaki u svom redu, bez numerisanja, bez "
-                "navodnika, bez objasnjenja."
-            )
-            odgovor = local_llm.run(uputstvo, language=None)
-            upiti = [red.strip() for red in odgovor.split("\n") if red.strip()]
+            """Pronadji dobavljace pretragom B2B direktorijuma i zemalja poznatih po proizvodnji."""
+            domeni = self.pronadji_direktorijume(local_llm, proizvod)
+            if not domeni:
+                domeni = ["alibaba.com", "made-in-china.com", "europages.com"]
+
+            zemlje = self.pronadji_zemlje(local_llm, proizvod)
 
             svi_dobavljaci = []
             vidjeni_sajtovi = set()
 
-            for upit in upiti[:3]:
+            for domen in domeni:
+                upit = f"site:{domen} {proizvod} manufacturer supplier"
                 rezultati = web_agent.pretrazi_dobavljace(upit)
                 for d in rezultati:
                     sajt = d.get("sajt", "")
                     if sajt and sajt not in vidjeni_sajtovi:
                         vidjeni_sajtovi.add(sajt)
                         svi_dobavljaci.append(d)
+
+            for zemlja in zemlje:
+                upit = f"{proizvod} exporter manufacturer {zemlja}"
+                rezultati = web_agent.pretrazi_dobavljace(upit)
+                for d in rezultati:
+                    sajt = d.get("sajt", "")
+                    if sajt and sajt not in vidjeni_sajtovi:
+                        vidjeni_sajtovi.add(sajt)
+                        d["zemlja_pretrage"] = zemlja
+                        svi_dobavljaci.append(d)
+
+            print(f"\nNasla sam {len(svi_dobavljaci)} firmi. Trazim kontakt i karakteristike za svaku...")
+
+            for d in svi_dobavljaci:
+                if not d.get("emailovi"):
+                    naziv = d.get("naziv", "")
+                    if naziv:
+                        zvanicni = None
+                        sajt_u_tekstu = web_agent.izvuci_sajt_iz_teksta(
+                            d.get("tekst_sajta", ""), izbegavaj_domene=domeni
+                        )
+                        if sajt_u_tekstu:
+                            tekst_novog_sajta = web_agent.procitaj_sajt(sajt_u_tekstu)
+                            if not tekst_novog_sajta.startswith("Greska"):
+                                podaci = web_agent.izvuci_kontakt_i_cene(tekst_novog_sajta)
+                                if podaci.get("emailovi"):
+                                    zvanicni = {
+                                        "sajt": sajt_u_tekstu,
+                                        "tekst_sajta": tekst_novog_sajta[:3000],
+                                        "emailovi": podaci["emailovi"],
+                                        "telefoni": podaci.get("telefoni", []),
+                                    }
+                        if not zvanicni:
+                            zvanicni = web_agent.pronadji_zvanicni_sajt(
+                                naziv, local_llm=local_llm, izbegavaj_domene=domeni
+                            )
+                        if zvanicni:
+                            d["zvanicni_sajt"] = zvanicni["sajt"]
+                            d["tekst_sajta"] = zvanicni["tekst_sajta"]
+                            d["emailovi"] = zvanicni["emailovi"]
+                            d["telefoni"] = zvanicni["telefoni"]
+
+                opis = self.opisi_dobavljaca(local_llm, d, proizvod)
+                d["zemlja"] = d.get("zemlja_pretrage") or opis["zemlja"]
+                d["opis_karakteristika"] = opis["opis_karakteristika"]
 
             return svi_dobavljaci
 

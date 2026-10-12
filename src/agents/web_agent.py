@@ -107,6 +107,92 @@ class WebAgent(BaseAgent):
                 })
 
             return dobavljaci
+    def izvuci_sajt_iz_teksta(self, tekst: str, izbegavaj_domene: list[str] | None = None) -> str | None:
+        """Pokusaj da pronadje pomen zvanicnog sajta firme unutar vec procitanog teksta (npr. B2B profila)."""
+        izbegavaj_domene = izbegavaj_domene or []
+        obrazac_domena = r"(?:https?://)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)"
+        kandidati = re.findall(obrazac_domena, tekst)
+
+        generican = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com"]
+
+        for domen in kandidati:
+            domen_mali = domen.lower()
+            if any(izb in domen_mali for izb in izbegavaj_domene):
+                continue
+            if any(g in domen_mali for g in generican):
+                continue
+            return f"https://{domen_mali}"
+
+        return None
+    def pronadji_zvanicni_sajt(self, naziv: str, local_llm=None, izbegavaj_domene: list[str] | None = None) -> dict | None:
+        """Pretrazi ime firme da nadje njen PRAVI zvanicni sajt (van B2B direktorijuma i oglasa) i izvuce kontakt."""
+        marketplace_domeni = [
+            "alibaba.com", "made-in-china.com", "europages.com", "aliexpress.com",
+            "globalsources.com", "tradekey.com", "indiamart.com", "dhgate.com",
+            "ec21.com", "exportersindia.com", "thomasnet.com", "kompass.com",
+        ]
+        ad_domeni = [
+            "bing.com/aclick", "google.com/aclick", "googleadservices.com",
+            "doubleclick.net", "googlesyndication.com",
+        ]
+        svi_za_izbegavanje = list(set((izbegavaj_domene or []) + marketplace_domeni + ad_domeni))
+
+        upit = f'"{naziv}" official website contact'
+
+        try:
+            results = list(DDGS().text(upit, max_results=5))
+        except Exception:
+            return None
+
+        kandidati = [
+            r for r in results
+            if r.get("href") and not any(d in r.get("href", "").lower() for d in svi_za_izbegavanje)
+        ]
+
+        if not kandidati:
+            return None
+
+        if local_llm:
+            lista_za_llm = "\n".join(
+                f"{i+1}. {r.get('title','')} - {r.get('href','')} - {r.get('body','')[:150]}"
+                for i, r in enumerate(kandidati)
+            )
+            uputstvo = (
+                f"Trazimo zvanicni sajt firme '{naziv}'. Evo rezultata pretrage:\n{lista_za_llm}\n\n"
+                "Koji broj rezultata najvise lici na PRAVI zvanicni sajt TE KONKRETNE firme "
+                "(ne blog, ne clanak/vodic, ne vladina/nepovezana stranica, ne generican direktorijum)? "
+                "Odgovori SAMO brojem. Ako nijedan ne lici na pravi sajt te firme, odgovori 0."
+            )
+            odgovor = local_llm.run(uputstvo, language=None).strip()
+            poklapanje = re.search(r"\d+", odgovor)
+            izbor = int(poklapanje.group()) if poklapanje else 0
+            if izbor == 0 or izbor > len(kandidati):
+                return None
+            kandidati = [kandidati[izbor - 1]]
+
+        for r in kandidati:
+            url = r.get("href", "")
+            tekst_sajta = self.procitaj_sajt(url)
+            if tekst_sajta.startswith("Greska"):
+                continue
+
+            podaci = self.izvuci_kontakt_i_cene(tekst_sajta)
+            emailovi_pravi = [
+                e for e in podaci.get("emailovi", [])
+                if not any(domen in e.lower() for domen in marketplace_domeni)
+            ]
+            if not emailovi_pravi:
+                continue
+
+            return {
+                "sajt": url,
+                "tekst_sajta": tekst_sajta[:3000],
+                "emailovi": emailovi_pravi,
+                "telefoni": podaci.get("telefoni", []),
+                "pouzdanost": self.oceni_pouzdanost(url),
+            }
+
+        return None
     def preuzmi_fajlove(self, url: str, folder: str = "preuzeto") -> list:
         """Pronalazi linkove ka PDF/cenovnik fajlovima na stranici i preuzima ih na disk."""
         try:

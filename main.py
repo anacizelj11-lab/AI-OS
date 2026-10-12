@@ -15,7 +15,7 @@ orchestrator.register_agent("email_agent", EmailAgent())
 print("AI-OS je pokrenut. Ukucaj 'kraj' za izlaz.")
 
 while True:
-    zadatak = input("Ti: ")
+    zadatak = input("Ti: ").strip()
     if zadatak.lower() in ["kraj", "exit", "quit"]:
         print("AI-OS: Cao!")
         break
@@ -156,22 +156,58 @@ while True:
             email_agent = orchestrator.agents["email_agent"]
             offer_agent = orchestrator.agents["offer_agent"]
 
-            print("\nTrazim dobavljace na internetu i izvlacim njihove kontakte...")
-            dobavljaci = offer_agent.pronadji_dobavljace(web_agent, local_llm,proizvod)
+            print("\nTrazim proizvodjace/uzgajivace sirom sveta...")
+            dobavljaci = offer_agent.pronadji_dobavljace(web_agent, local_llm, proizvod)
+
+            if not dobavljaci:
+                print("AI-OS: Nisam pronasla nijednog dobavljaca. Probaj drugaciji proizvod ili pretragu.")
+                continue
+
+            print(f"\nPronadjeno firmi: {len(dobavljaci)}\n")
+            for i, d in enumerate(dobavljaci, start=1):
+                email_prikaz = d["emailovi"][0] if d.get("emailovi") else "nema pronadjenog email-a"
+                print(f"{i}. {d.get('naziv','')}")
+                print(f"   Zemlja: {d.get('zemlja','nepoznato')}")
+                print(f"   Kontakt: {email_prikaz}")
+                print(f"   Karakteristike: {d.get('opis_karakteristika','')}")
+                print(f"   Sajt: {d.get('zvanicni_sajt') or d.get('sajt','')}")
+                print()
 
             dobavljaci_sa_email = [d for d in dobavljaci if d.get("emailovi")]
-
-            print(f"\nPronadjeno dobavljaca: {len(dobavljaci)}, od toga sa email adresom: {len(dobavljaci_sa_email)}")
-
             if not dobavljaci_sa_email:
-                print("AI-OS: Nijedan pronadjeni dobavljac nema email na sajtu. Probaj drugaciji proizvod ili pretragu.")
+                print("AI-OS: Nijedan od pronadjenih dobavljaca nema email. Probaj drugaciji proizvod ili pretragu.")
+                continue
+
+            izbor = input(
+                "Unesi brojeve firmi kojima zelis da posaljes upit (odvojeno zarezom, npr. 1,3), "
+                "ili 'sve' za sve sa email adresom, ili Enter da preskocis: "
+            )
+
+            if not izbor.strip():
+                continue
+
+            if izbor.strip().lower() == "sve":
+                izabrani = dobavljaci_sa_email
+            else:
+                indeksi = []
+                for deo in izbor.split(","):
+                    deo = deo.strip()
+                    if deo.isdigit():
+                        indeksi.append(int(deo))
+                izabrani = [
+                    dobavljaci[i - 1] for i in indeksi
+                    if 1 <= i <= len(dobavljaci) and dobavljaci[i - 1].get("emailovi")
+                ]
+
+            if not izabrani:
+                print("AI-OS: Nista nije izabrano ili izabrane firme nemaju email.")
                 continue
 
             poslati_dobavljaci = []
 
-            for d in dobavljaci_sa_email:
+            for d in izabrani:
                 email_dobavljaca = d["emailovi"][0]
-                print(f"\n--- DOBAVLJAC: {d.get('naziv', '')} ({d.get('sajt', '')}) ---")
+                print(f"\n--- DOBAVLJAC: {d.get('naziv', '')} ({d.get('zvanicni_sajt') or d.get('sajt', '')}) ---")
                 print(f"Email: {email_dobavljaca}")
 
                 print("\nSastavljam upit za ponudu...")
@@ -220,6 +256,7 @@ while True:
             print("\nAI-OS: Istorija ponuda je sacuvana.")
 
             continue
+
     if zadatak.lower().startswith("istrazi"):
         tema = input("Sta da istrazim u dubinu (npr. proizvod, cena, dobavljaci)? ")
 
