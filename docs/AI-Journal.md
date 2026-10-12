@@ -133,3 +133,27 @@ Otkriveni problemi koji ostaju za sledeci put:
 - Povremeno se u predlogu email-a pojavljuje dupli tekst (srpski pa engleski) - jezik treba doraditi
 
 Dogovoreno: ne prelazimo na sledeci projekat (npr. BookAgent) dok OfferAgent ne pronalazi prave proizvodjace/uzgajivace kako treba.
+
+## 12.10.2026.
+
+### Sta je uradjeno
+- Ispravljen bag: "kraj" ponekad nije gasio program zbog whitespace-a u input-u -> dodato `.strip()` u main.py.
+- Prosirena pretraga dobavljaca (OfferAgent.pronadji_dobavljace), generalizovano za bilo koji proizvod (ne samo kafu):
+  - LLM bira relevantne B2B direktorijume (Alibaba, Made-in-China, Europages...) i pretrazuje preko `site:` upita.
+  - LLM dinamicki bira 5 zemalja/regiona najpoznatijih po proizvodnji trazenog proizvoda.
+  - Za svaku firmu: pokusaj da se nadje njen zvanicni sajt (prvo iz teksta B2B profila, zatim pretraga + LLM filter kvaliteta) i izvuku pravi kontakt podaci (filtrirani od generickih marketplace/ad domena).
+  - LLM izvlaci zemlju porekla i kratak opis karakteristika firme iz sadrzaja sajta.
+- main.py: promenjen tok komande "trazi ponudu" - prvo se ispisu SVE pronadjene firme (ime, zemlja, kontakt, karakteristike, sajt), pa se tek onda pita koje firme kontaktirati (brojevi odvojeni zarezom, 'sve', ili Enter da se preskoci).
+- Testirano na "green coffee beans" - pronadjeno 25 firmi. Firme pronadjene preko pretrage po zemljama (Vijetnam, Indonezija, Etiopija) bile su mnogo kvalitetnije i tacnije od onih sa B2B direktorijuma (koji su ukljucivali i par pogresnih pogodaka, npr. calendly.com email umesto dobavljaca kafe).
+- Sve promene commit-ovane i push-ovane na GitHub (commit 45c255c, "Dodata pretraga dobavljaca po zemljama proizvodnje i B2B direktorijumima").
+
+### Otvoreno / za sledeci put
+- B2B direktorijum deo pretrage daje dosta slabih/pogresnih rezultata - razmisliti o smanjenju oslanjanja na njega ili dodatnom filtriranju.
+- Firma "Halio Coffee" imala cudan email format (haliocoffee.com@gmail.com) - proveriti/popraviti.
+- Ideja "Planer / Instinct sloj" (hibridni Orchestrator - brzo keyword rutiranje + LLM planiranje za nepoznate komande) dodata u roadmap, jos nije implementirana.
+
+## Plan za sutra (13.10.2026.)
+1. Pokrenuti ponovo "trazi ponudu" (isti ili novi proizvod) i zavrsiti ceo tok do kraja: izabrati dobavljace, poslati upite, procitati pristigle ponude, uporediti ih.
+2. Analizirati zasto B2B direktorijum deo daje losije rezultate od pretrage po zemljama i odluciti da li ga smanjiti/ukloniti ili dodatno filtrirati.
+3. Proveriti i popraviti email kod Halio Coffee.
+4. (opciono, ako bude vremena) Poceti razmisljanje o implementaciji Planer/Instinct sloju.
