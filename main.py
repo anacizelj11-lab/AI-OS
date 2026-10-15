@@ -147,115 +147,165 @@ while True:
 
         continue
     if zadatak.lower().startswith("trazi ponudu"):
-            proizvod = input("Za koji proizvod/uslugu da trazim ponudu? ")
-            kolicina = input("Kolicina (ili samo Enter ako nije vazno): ")
-            dodatni_zahtevi = input("Dodatni zahtevi (ili samo Enter): ")
+        proizvod = input("Za koji proizvod/uslugu da trazim ponudu? ")
+        zemlja = input("Da li znas tacnu zemlju/destinaciju? (ili Enter da AI sam odredi): ")
+        kolicina = input("Kolicina / broj osoba (ili samo Enter ako nije vazno): ")
+        dodatni_zahtevi = input("Dodatni zahtevi (ili samo Enter): ")
 
-            web_agent = orchestrator.agents["web_agent"]
-            local_llm = orchestrator.agents["local_llm"]
-            email_agent = orchestrator.agents["email_agent"]
-            offer_agent = orchestrator.agents["offer_agent"]
+        web_agent = orchestrator.agents["web_agent"]
+        local_llm = orchestrator.agents["local_llm"]
+        email_agent = orchestrator.agents["email_agent"]
+        offer_agent = orchestrator.agents["offer_agent"]
+        polaziste = ""
+        if offer_agent._trazi_letove(dodatni_zahtevi):
+            polaziste = input(
+                "Grad/drzava polaska (ili Enter ako nije vazno): "
+            ).strip()
 
-            print("\nTrazim proizvodjace/uzgajivace sirom sveta...")
-            dobavljaci = offer_agent.pronadji_dobavljace(web_agent, local_llm, proizvod)
+        print("\nTrazim ponude sirom sveta...")
+        dobavljaci = offer_agent.pronadji_dobavljace(
+            web_agent,
+            local_llm,
+            proizvod,
+            zadata_zemlja=zemlja,
+            dodatni_zahtevi=dodatni_zahtevi,
+            kolicina=kolicina,
+            polaziste=polaziste,
+        )
 
-            if not dobavljaci:
-                print("AI-OS: Nisam pronasla nijednog dobavljaca. Probaj drugaciji proizvod ili pretragu.")
-                continue
-
-            print(f"\nPronadjeno firmi: {len(dobavljaci)}\n")
-            for i, d in enumerate(dobavljaci, start=1):
-                email_prikaz = d["emailovi"][0] if d.get("emailovi") else "nema pronadjenog email-a"
-                print(f"{i}. {d.get('naziv','')}")
-                print(f"   Zemlja: {d.get('zemlja','nepoznato')}")
-                print(f"   Kontakt: {email_prikaz}")
-                print(f"   Karakteristike: {d.get('opis_karakteristika','')}")
-                print(f"   Sajt: {d.get('zvanicni_sajt') or d.get('sajt','')}")
-                print()
-
-            dobavljaci_sa_email = [d for d in dobavljaci if d.get("emailovi")]
-            if not dobavljaci_sa_email:
-                print("AI-OS: Nijedan od pronadjenih dobavljaca nema email. Probaj drugaciji proizvod ili pretragu.")
-                continue
-
-            izbor = input(
-                "Unesi brojeve firmi kojima zelis da posaljes upit (odvojeno zarezom, npr. 1,3), "
-                "ili 'sve' za sve sa email adresom, ili Enter da preskocis: "
-            )
-
-            if not izbor.strip():
-                continue
-
-            if izbor.strip().lower() == "sve":
-                izabrani = dobavljaci_sa_email
-            else:
-                indeksi = []
-                for deo in izbor.split(","):
-                    deo = deo.strip()
-                    if deo.isdigit():
-                        indeksi.append(int(deo))
-                izabrani = [
-                    dobavljaci[i - 1] for i in indeksi
-                    if 1 <= i <= len(dobavljaci) and dobavljaci[i - 1].get("emailovi")
-                ]
-
-            if not izabrani:
-                print("AI-OS: Nista nije izabrano ili izabrane firme nemaju email.")
-                continue
-
-            poslati_dobavljaci = []
-
-            for d in izabrani:
-                email_dobavljaca = d["emailovi"][0]
-                print(f"\n--- DOBAVLJAC: {d.get('naziv', '')} ({d.get('zvanicni_sajt') or d.get('sajt', '')}) ---")
-                print(f"Email: {email_dobavljaca}")
-
-                print("\nSastavljam upit za ponudu...")
-                tekst_upita = offer_agent.sastavi_upit(local_llm, d, proizvod, kolicina, dodatni_zahtevi)
-
-                print("\n--- PREDLOG UPITA ---")
-                print(tekst_upita)
-                print("---------------------")
-
-                potvrda = input(f"\nDa li da posaljem ovaj upit na {email_dobavljaca}? (da/ne/izmeni): ")
-
-                if potvrda.lower() == "izmeni":
-                    tekst_upita = input("Unesi novi tekst upita: ")
-                    potvrda = "da"
-
-                if potvrda.lower() == "da":
-                    rezultat = email_agent.send_email(email_dobavljaca, f"Upit za ponudu: {proizvod}", tekst_upita)
-                    print(f"AI-OS: {rezultat}")
-                    poslati_dobavljaci.append(d)
-                else:
-                    print("AI-OS: Upit ovom dobavljacu nije poslat.")
-
-            if not poslati_dobavljaci:
-                print("\nAI-OS: Nijedan upit nije poslat.")
-                continue
-
-            input("\nKada stignu odgovori na email, pritisni Enter da procitamo ponude...")
-
-            print("\nCitam pristigle ponude...")
-            ponude = email_agent.procitaj_ponude(label="Ponude-AIOS")
-
-            if not ponude:
-                print("AI-OS: Nijedna ponuda jos nije pronadjena pod labelom 'Ponude-AIOS'.")
-                continue
-
-            print(f"\nPronadjeno ponuda: {len(ponude)}")
-
-            print("\nUporedjujem ponude...")
-            preporuka = offer_agent.uporedi_ponude(local_llm, ponude)
-
-            print("\n--- PREPORUKA ---")
-            print(preporuka)
-            print("-----------------")
-
-            offer_agent.sacuvaj_istoriju(proizvod, ponude, preporuka)
-            print("\nAI-OS: Istorija ponuda je sacuvana.")
-
+        if not dobavljaci:
+            print("AI-OS: Nisam pronasla nista. Probaj drugaciji pojam ili pretragu.")
             continue
+
+        print(f"\nPronadjeno: {len(dobavljaci)}\n")
+        nazivi_kategorija = {
+            "hoteli": "Hoteli",
+            "privatni_smestaj": "Privatni smestaj",
+            "agencije_lokalne": "Lokalne/regionalne turisticke agencije",
+            "agencije_medjunarodne": "Medjunarodne turisticke agencije",
+            "letovi": "Avionske karte i letovi",
+            "ostalo": "Ostale ponude",
+        }
+        prethodna_kategorija = None
+        for i, d in enumerate(dobavljaci, start=1):
+            kategorija = d.get("kategorija_ponude", "ostalo")
+            if kategorija != prethodna_kategorija:
+                print(f"\n--- {nazivi_kategorija.get(kategorija, kategorija)} ---")
+                prethodna_kategorija = kategorija
+            if d.get("emailovi"):
+                kontakt_prikaz = d["emailovi"][0]
+            elif d.get("telefoni"):
+                kontakt_prikaz = d["telefoni"][0]
+            elif d.get("platforma_link"):
+                kontakt_prikaz = f"samo preko platforme: {d['platforma_link']}"
+            else:
+                kontakt_prikaz = "nema pronadjenog kontakta"
+            cena_prikaz = d.get("cena", "nepoznato")
+            print(f"{i}. {d.get('naziv','')}")
+            print(f"   Zemlja: {d.get('zemlja','nepoznato')}")
+            print(f"   Cena: {cena_prikaz}")
+            print(f"   Kontakt: {kontakt_prikaz}")
+            print(f"   Karakteristike: {d.get('opis_karakteristika','')}")
+            if d.get("ocena_i_recenzije"):
+                print(f"   Ocena i recenzije: {d['ocena_i_recenzije']}")
+            if d.get("avio_kompanija"):
+                print(f"   Avio-kompanija: {d['avio_kompanija']}")
+            if d.get("cena_karte"):
+                print(f"   Cena karte: {d['cena_karte']}")
+            if d.get("tip_leta"):
+                print(f"   Tip leta: {d['tip_leta']}")
+            if d.get("napomena_rute"):
+                print(f"   Napomena: {d['napomena_rute']}")
+            print(f"   Sajt: {d.get('zvanicni_sajt') or d.get('sajt','')}")
+            print()
+
+        izbor = input(
+            "Unesi brojeve firmi/smestaja kojima zelis da posaljes upit (odvojeno zarezom, npr. 1,3), "
+            "ili 'sve' za sve koje imaju email, ili Enter da preskocis: "
+        )
+
+        if not izbor.strip():
+            continue
+
+        if izbor.strip().lower() == "sve":
+            izabrani = [d for d in dobavljaci if d.get("emailovi")]
+        else:
+            indeksi = []
+            for deo in izbor.split(","):
+                deo = deo.strip()
+                if deo.isdigit():
+                    indeksi.append(int(deo))
+            izabrani = [dobavljaci[i - 1] for i in indeksi if 1 <= i <= len(dobavljaci)]
+
+        if not izabrani:
+            print("AI-OS: Nista nije izabrano.")
+            continue
+
+        poslati_dobavljaci = []
+
+        for d in izabrani:
+            naziv_prikaz = d.get('naziv', '')
+            sajt_prikaz = d.get('zvanicni_sajt') or d.get('sajt', '')
+
+            if not d.get("emailovi"):
+                if d.get("platforma_link"):
+                    print(f"\n--- {naziv_prikaz} ---")
+                    print(f"AI-OS: Nema direktan email - ovo mora rucno preko platforme: {d['platforma_link']}")
+                else:
+                    print(f"\n--- {naziv_prikaz} ---")
+                    print("AI-OS: Nema pronadjenog kontakta za ovog dobavljaca, preskacem.")
+                continue
+
+            email_dobavljaca = d["emailovi"][0]
+            print(f"\n--- DOBAVLJAC: {naziv_prikaz} ({sajt_prikaz}) ---")
+            print(f"Email: {email_dobavljaca}")
+
+            print("\nSastavljam upit za ponudu...")
+            tekst_upita = offer_agent.sastavi_upit(local_llm, d, proizvod, kolicina, dodatni_zahtevi)
+
+            print("\n--- PREDLOG UPITA ---")
+            print(tekst_upita)
+            print("---------------------")
+
+            potvrda = input(f"\nDa li da posaljem ovaj upit na {email_dobavljaca}? (da/ne/izmeni): ")
+
+            if potvrda.lower() == "izmeni":
+                tekst_upita = input("Unesi novi tekst upita: ")
+                potvrda = "da"
+
+            if potvrda.lower() == "da":
+                rezultat = email_agent.send_email(email_dobavljaca, f"Upit za ponudu: {proizvod}", tekst_upita)
+                print(f"AI-OS: {rezultat}")
+                poslati_dobavljaci.append(d)
+            else:
+                print("AI-OS: Upit ovom dobavljacu nije poslat.")
+
+        if not poslati_dobavljaci:
+            print("\nAI-OS: Nijedan upit nije poslat.")
+            continue
+
+        input("\nKada stignu odgovori na email, pritisni Enter da procitamo ponude...")
+
+        print("\nCitam pristigle ponude...")
+        ponude = email_agent.procitaj_ponude(label="Ponude-AIOS")
+
+        if not ponude:
+            print("AI-OS: Nijedna ponuda jos nije pronadjena pod labelom 'Ponude-AIOS'.")
+            continue
+
+        print(f"\nPronadjeno ponuda: {len(ponude)}")
+
+        print("\nUporedjujem ponude...")
+        preporuka = offer_agent.uporedi_ponude(local_llm, ponude)
+
+        print("\n--- PREPORUKA ---")
+        print(preporuka)
+        print("-----------------")
+
+        offer_agent.sacuvaj_istoriju(proizvod, ponude, preporuka)
+        print("\nAI-OS: Istorija ponuda je sacuvana.")
+
+        continue
 
     if zadatak.lower().startswith("istrazi"):
         tema = input("Sta da istrazim u dubinu (npr. proizvod, cena, dobavljaci)? ")
