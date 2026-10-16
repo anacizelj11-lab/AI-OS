@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
+from src.agents.accommodation_agent import AccommodationAgent
+from src.agents.agency_agent import AgencyAgent
 from src.agents.base_agent import BaseAgent
+from src.agents.transport_agent import TransportAgent
+
+
+logger = logging.getLogger(__name__)
 
 
 class OfferAgent(BaseAgent):
@@ -18,6 +26,72 @@ class OfferAgent(BaseAgent):
 
     def __init__(self, name: str = "OfferAgent") -> None:
         super().__init__(name=name)
+        self.accommodation_agent = AccommodationAgent()
+        self.agency_agent = AgencyAgent()
+        self.transport_agent = TransportAgent()
+
+    def _pretrazi_upite_paralelno(
+        self,
+        web_agent,
+        upiti: list[tuple[str, str]],
+    ) -> list[tuple[str, str, list[dict]]]:
+        """Pretrazi svaku kategoriju paralelno, uz izolaciju gresaka po upitu."""
+        grupisani: dict[str, list[tuple[str, str]]] = {
+            "smestaj": [],
+            "agencije": [],
+            "prevoz": [],
+            "ostalo": [],
+        }
+        for upit, zemlja in upiti:
+            kategorija = self._kategorija_usluge(upit)
+            if kategorija in {
+                "hoteli",
+                "privatni_smestaj",
+            }:
+                grupa = "smestaj"
+            elif kategorija.startswith("agencije_"):
+                grupa = "agencije"
+            elif kategorija in {
+                "letovi",
+                "trajekti",
+                "autobusi",
+                "vozovi",
+            }:
+                grupa = "prevoz"
+            else:
+                grupa = "ostalo"
+            grupisani[grupa].append((upit, zemlja))
+
+        def pretrazi_grupu(stavke: list[tuple[str, str]]) -> list[tuple[str, str, list[dict]]]:
+            rezultati_grupe = []
+            for upit, zemlja in stavke:
+                try:
+                    rezultati = self._pretrazi_upit_usluge(web_agent, upit, zemlja)
+                except Exception as greska:
+                    print(f"Upozorenje: pretraga nije uspela za '{upit}': {greska}")
+                    rezultati = []
+                rezultati_grupe.append((upit, zemlja, rezultati))
+            return rezultati_grupe
+
+        prikupljeni: dict[tuple[str, str], list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=len(grupisani)) as executor:
+            poslovi = {
+                executor.submit(pretrazi_grupu, stavke): grupa
+                for grupa, stavke in grupisani.items()
+                if stavke
+            }
+            for posao in as_completed(poslovi):
+                grupa = poslovi[posao]
+                try:
+                    for upit, zemlja, rezultati in posao.result():
+                        prikupljeni[(upit, zemlja)] = rezultati
+                except Exception as greska:
+                    print(f"Upozorenje: pretrage grupe '{grupa}' nisu uspele: {greska}")
+
+        return [
+            (upit, zemlja, prikupljeni.get((upit, zemlja), []))
+            for upit, zemlja in upiti
+        ]
     def pronadji_direktorijume(self, local_llm, proizvod: str) -> list[str]:
         """Pita LLM koji B2B direktorijumi/platforme najbolje odgovaraju ovoj kategoriji proizvoda."""
         uputstvo = (
@@ -298,78 +372,28 @@ class OfferAgent(BaseAgent):
             )
             if dodatni_zahtevi.strip():
                 upiti.append(f"{dodatni_zahtevi} {zemlja} providers contact")
-        if trazi_letove:
-            tekuca_godina = datetime.now().year
-            ruta_letova = (
-                f"flights from {polaziste} to {zemlja}"
-                if polaziste.strip()
-                else f"flights to {zemlja}"
-            )
+        if trazi_letove or re.search(
+            r"\b(?:ferry|ferries|trajekt\w*|brod\w*|bus|buses|autobus\w*|"
+            r"coach|intercity|train|trains|rail|voz\w*)\b",
+            self._normalizuj_tekst(dodatni_zahtevi),
+        ):
             upiti.extend(
-                [
-                    f"site:skyscanner.com {ruta_letova}",
-                    f"site:google.com/travel/flights {ruta_letova}",
-                    f"site:kayak.com {ruta_letova}",
-                    f"site:momondo.com {ruta_letova}",
-                    f"site:kiwi.com {ruta_letova}",
-                    f"Skyscanner {ruta_letova} prices",
-                    f"Google Flights {ruta_letova} airfare",
-                    f"Kayak {ruta_letova} prices",
-                    f"Momondo {ruta_letova} airfare",
-                    f"Kiwi.com {ruta_letova} prices",
-                    (
-                        f"{polaziste} to {zemlja} flight tickets"
-                        if polaziste.strip()
-                        else f"flights to {zemlja} airline"
-                    ),
-                    (
-                        f"direct flights from {polaziste} to {zemlja} {tekuca_godina}"
-                        if polaziste.strip()
-                        else f"direct flights {zemlja} {tekuca_godina}"
-                    ),
-                ]
-            )
-            if polaziste.strip() and self._je_polaziste_u_regionu(polaziste):
-                upiti.extend(
-                    [
-                        f"avionska karta {polaziste} {zemlja}",
-                        f"letovi iz {polaziste} za {zemlja}",
-                    ]
+                self.transport_agent.sastavi_upite(
+                    zemlja,
+                    polaziste=polaziste,
+                    dodatni_zahtevi=dodatni_zahtevi,
                 )
+            )
         if trazi_agencije:
-            upiti.extend(
-                [
-                    f"turisticka agencija {zemlja} aranzman {proizvod}",
-                    f"agencija putovanja {zemlja} organizovana putovanja {proizvod}",
-                    f"travel agency {zemlja} package deals {proizvod}",
-                    f"tour operator {zemlja} holiday package accommodation transport",
-                ]
-            )
-            if siri:
-                upiti.extend(
-                    [
-                        f"turisticka agencija {zemlja} letovanje paket aranzman cena",
-                        f"organizovana putovanja {zemlja} turisticka agencija ponude",
-                        f"tour operators offering holiday packages to {zemlja}",
-                        f"vacation package {zemlja} travel company direct",
-                    ]
-                )
+            upiti.extend(self.agency_agent.sastavi_upite(proizvod, zemlja, siri=siri))
         if self._trazi_putovanja(proizvod, dodatni_zahtevi):
             upiti.extend(
-                [
-                    f"{proizvod} hotels {zemlja} official website",
-                    f"hotels {zemlja} direct booking official website",
-                    f"private accommodation {zemlja} rental contact",
-                    f"guesthouse apartment villa {zemlja} owner direct booking",
-                ]
-            )
-            if siri:
-                upiti.extend(
-                    [
-                        f"independent hotels {zemlja} official booking",
-                        f"private guesthouse villa apartment {zemlja} direct rental",
-                    ]
+                self.accommodation_agent.sastavi_upite(
+                    proizvod,
+                    zemlja,
+                    siri=siri,
                 )
+            )
         jedinstveni_upiti = []
         vidjeni_upiti = set()
         for upit in upiti:
@@ -379,17 +403,9 @@ class OfferAgent(BaseAgent):
                 jedinstveni_upiti.append(upit)
         return jedinstveni_upiti
 
-    @classmethod
-    def _je_polaziste_u_regionu(cls, polaziste: str) -> bool:
-        normalizovano = cls._normalizuj_tekst(polaziste)
-        region = (
-            "serbia", "srbija", "belgrade", "beograd", "novi sad", "nis",
-            "sarajevo", "bosnia", "herzegovina", "bosna", "croatia", "hrvatska",
-            "zagreb", "montenegro", "crna gora", "podgorica", "slovenia",
-            "slovenija", "ljubljana", "north macedonia", "macedonia",
-            "skopje", "albania", "albanija",
-        )
-        return any(mesto in normalizovano for mesto in region)
+    @staticmethod
+    def _je_polaziste_u_regionu(polaziste: str) -> bool:
+        return TransportAgent.je_polaziste_u_regionu(polaziste)
 
     @classmethod
     def _trazi_letove(cls, tekst: str) -> bool:
@@ -417,77 +433,7 @@ class OfferAgent(BaseAgent):
 
     @staticmethod
     def _izvuci_podatke_o_letu(dobavljac: dict, tekst: str) -> dict[str, str]:
-        podaci: dict[str, str] = {}
-        relevantne_linije = [
-            re.sub(r"\s+", " ", red).strip()
-            for red in re.split(r"[\r\n.!?]+", tekst)
-            if red.strip()
-        ]
-        lokacije = {
-            rec
-            for rec in re.findall(
-                r"[a-z0-9]+",
-                OfferAgent._normalizuj_tekst(
-                    str(dobavljac.get("zemlja_pretrage", "") or "")
-                ),
-            )
-            if len(rec) > 3
-        }
-        route_price_lines = []
-        for red in relevantne_linije:
-            normalizovan_red = OfferAgent._normalizuj_tekst(red)
-            ima_cenu = bool(re.search(
-                r"(?:[$€£]\s?\d[\d,.]*|\b(?:USD|EUR|GBP)\s?\d[\d,.]*|"
-                r"\d[\d,.]*\s?\b(?:USD|EUR|GBP)\b)",
-                red,
-                re.I,
-            ))
-            ima_lokaciju = bool(lokacije and any(lokacija in normalizovan_red for lokacija in lokacije))
-            ima_rutu = bool(
-                re.search(r"\b(?:from|to|via|ath|jsi|route|rute|ruta)\b|->|[-–]\s*[a-z]{3}\b",
-                          normalizovan_red)
-            )
-            if ima_cenu and ima_lokaciju and ima_rutu:
-                route_price_lines.append(red)
-
-        for red in route_price_lines:
-            kompanija = re.search(
-                r"\b(?:operated by|airline|carrier|flight with|flights by)\s+"
-                r"([A-Z][A-Za-z0-9&'.-]*(?:\s+[A-Z][A-Za-z0-9&'.-]*){0,2})",
-                red,
-            )
-            if not kompanija:
-                kompanija = re.search(
-                    r"\b([A-Z][A-Za-z0-9&'.-]*(?:\s+[A-Z][A-Za-z0-9&'.-]*){0,2}"
-                    r"\s+(?:Airlines?|Airways|Aviation))\b",
-                    red,
-                )
-            if kompanija:
-                podaci["avio_kompanija"] = kompanija.group(1).strip()
-                break
-
-        leta_sadrzaj = "\n".join(route_price_lines)
-        if re.search(r"\b(?:direct flight|non[\s-]?stop|nonstop)\b", leta_sadrzaj, re.I):
-            podaci["tip_leta"] = "Direktan let"
-        elif re.search(
-            r"\b(?:\d+\s+stops?|one stop|two stops?|layover|connecting flight|"
-            r"with a connection|presedanje)\b",
-            leta_sadrzaj,
-            re.I,
-        ):
-            podaci["tip_leta"] = "Let sa presedanjem"
-
-        if route_price_lines:
-            cena = re.search(
-                r"(?:[$€£]\s?\d[\d,.]*|\b(?:USD|EUR|GBP)\s?\d[\d,.]*|"
-                r"\d[\d,.]*\s?\b(?:USD|EUR|GBP)\b)",
-                "\n".join(route_price_lines),
-                re.I,
-            )
-            if cena:
-                podaci["cena_karte"] = cena.group(0).strip().rstrip(".,")
-
-        return podaci
+        return TransportAgent.izvuci_podatke_o_letu(dobavljac, tekst)
 
     @staticmethod
     def _normalizuj_url_rezultata(url: str) -> str:
@@ -507,7 +453,7 @@ class OfferAgent(BaseAgent):
         normalizovan = self._normalizuj_tekst(upit)
         if self._trazi_letove(normalizovan) or any(
             domen in normalizovan
-            for domen in ("skyscanner", "google.com/travel/flights", "kayak.com", "momondo", "kiwi.com")
+            for domen in ("skyscanner", "google.com/travel/flights", "momondo", "kiwi.com")
         ):
             return "letovi"
         if re.search(r"\b(?:turisticka agencija|agencija putovanja|travel agency|tour operator|"
@@ -522,11 +468,71 @@ class OfferAgent(BaseAgent):
             return "privatni_smestaj"
         if "airbnb" in normalizovan:
             return "privatni_smestaj"
+        if any(
+            token in normalizovan
+            for token in (
+                "ferryhopper",
+                "directferries",
+                "ferries.gr",
+                "ferry",
+                "ferries",
+                "trajekt",
+                "brod",
+            )
+        ):
+            return "trajekti"
+        if any(
+            token in normalizovan
+            for token in ("getbybus", "flixbus", "busbud", "autobus", "intercity bus")
+        ):
+            return "autobusi"
+        if any(
+            token in normalizovan
+            for token in ("thetrainline", "trainline", "omio", "train", "rail", "voz")
+        ):
+            return "vozovi"
         if "booking.com" in normalizovan or "tripadvisor.com" in normalizovan or re.search(
             r"\bhotel", normalizovan
         ):
             return "hoteli"
         return "ostalo"
+
+    @classmethod
+    def _tip_sadrzaja_ponude(cls, rezultat: dict) -> str | None:
+        naslov = cls._normalizuj_tekst(str(rezultat.get("naziv", "") or ""))
+        sadrzaj = cls._normalizuj_tekst(
+            " ".join(
+                str(rezultat.get(polje, "") or "")
+                for polje in ("opis", "tekst_sajta", "sajt")
+            )
+        )
+        signali_hotela = r"\b(?:hotels?|accommodation|lodging|guesthouses?|resorts?|hotel deals)\b"
+        signali_letova = (
+            r"\b(?:flights?|airfare|airlines?|air tickets?|flight deals|"
+            r"avio|letovi|avionske karte)\b"
+        )
+        naslov_je_hotel = bool(re.search(signali_hotela, naslov))
+        naslov_je_let = bool(re.search(signali_letova, naslov))
+        if naslov_je_hotel != naslov_je_let:
+            return "hoteli" if naslov_je_hotel else "letovi"
+
+        sadrzaj_je_hotel = bool(re.search(signali_hotela, sadrzaj))
+        sadrzaj_je_let = bool(re.search(signali_letova, sadrzaj))
+        if sadrzaj_je_hotel != sadrzaj_je_let:
+            return "hoteli" if sadrzaj_je_hotel else "letovi"
+        return None
+
+    def _pretrazi_upit_usluge(self, web_agent, upit: str, zemlja: str) -> list[dict]:
+        kategorija = self._kategorija_usluge(upit)
+        if kategorija in {"hoteli", "privatni_smestaj"}:
+            return self.accommodation_agent.pretrazi(web_agent, upit, zemlja)
+        if kategorija.startswith("agencije_"):
+            return self.agency_agent.pretrazi(web_agent, upit, zemlja)
+        if kategorija == "letovi":
+            return self.transport_agent.pretrazi(web_agent, upit, zemlja)
+        if kategorija in {"trajekti", "autobusi", "vozovi"}:
+            return self.transport_agent.pretrazi(web_agent, upit, zemlja)
+        return web_agent.pretrazi_dobavljace(upit, zemlja=zemlja)
 
     @staticmethod
     def _poruka_o_bot_zastiti(tekst: str) -> bool:
@@ -570,50 +576,7 @@ class OfferAgent(BaseAgent):
 
     @staticmethod
     def _izvuci_ocenu_i_recenzije(tekst: str) -> str:
-        if not tekst:
-            return ""
-
-        delovi = []
-        ocena = re.search(
-            r"\b(\d(?:[.,]\d{1,2})?)\s*(?:/|out of)\s*10\b",
-            tekst,
-            re.IGNORECASE,
-        )
-        if ocena:
-            delovi.append(f"Ocena: {ocena.group(1)}/10")
-        else:
-            zvezdice = re.search(
-                r"\b(?:rated|rating|score|ocena)?\s*"
-                r"(\d(?:[.,]\d{1,2})?)\s*(?:/ ?5|out of 5|stars?|zvezdica)\b",
-                tekst,
-                re.IGNORECASE,
-            ) or re.search(r"\b(\d)\s*[- ]star\b", tekst, re.IGNORECASE)
-            if zvezdice:
-                delovi.append(f"Ocena: {zvezdice.group(1)} zvezdica")
-
-        broj_recenzija = re.search(
-            r"\b(\d[\d,. ]{0,12})\s+"
-            r"(?:verified\s+)?(?:guest\s+)?(?:reviews?|ratings?|recenzija|utisaka)\b",
-            tekst,
-            re.IGNORECASE,
-        )
-        if broj_recenzija:
-            broj = re.sub(r"\s+", " ", broj_recenzija.group(1)).strip(" ,.")
-            delovi.append(f"Recenzije: {broj}")
-
-        utisak = re.search(
-            r"(?:guest reviews?|what guests say|customer reviews?|"
-            r"reviews?[:\s-]+|gosti kazu|utisci gostiju)[:\s-]*"
-            r"[\"“]?(.{20,240}?)(?:[\"”]|(?<=[.!?])\s|$)",
-            tekst,
-            re.IGNORECASE,
-        )
-        if utisak:
-            citat = re.sub(r"\s+", " ", utisak.group(1)).strip(" \t\r\n\"“”'")
-            if citat:
-                delovi.append(f"Utisci: {citat}")
-
-        return "; ".join(delovi)
+        return AccommodationAgent.izvuci_ocenu_i_recenzije(tekst)
 
     def _rezultat_povezan(
         self,
@@ -663,6 +626,21 @@ class OfferAgent(BaseAgent):
                 ima_signal_agencije
                 and (not vodic_ili_tura or ima_aranman)
                 and lokacija_pogodjena
+            )
+
+        if kategorija in {"trajekti", "autobusi", "vozovi"}:
+            kljucne_reci = {
+                "trajekti": ("ferry", "ferries", "trajekt", "brod"),
+                "autobusi": ("bus", "buses", "autobus", "coach", "intercity"),
+                "vozovi": ("train", "trains", "rail", "voz"),
+            }[kategorija]
+            lokacije = [
+                rec for rec in re.findall(r"[a-z0-9]+", self._normalizuj_tekst(zemlja))
+                if len(rec) > 3
+            ]
+            return (
+                any(signal in sadrzaj for signal in kljucne_reci)
+                and (not lokacije or any(lokacija in sadrzaj for lokacija in lokacije))
             )
 
         if kategorija == "letovi":
@@ -791,6 +769,59 @@ class OfferAgent(BaseAgent):
         query = urlencode(sorted(parametri))
         return urlunsplit(("", domen, putanja, query, ""))
 
+    @staticmethod
+    def _vrednost_popunjena(dobavljac: dict, polja: tuple[str, ...]) -> bool:
+        return any(
+            dobavljac.get(polje)
+            and str(dobavljac[polje]).strip().casefold() not in {"nepoznato", "nema"}
+            for polje in polja
+        )
+
+    @classmethod
+    def _informativnost_ponude(cls, dobavljac: dict) -> int:
+        polja_za_ocenu = (
+            ("cena", "cene", "cena_karte"),
+            ("ocena_i_recenzije",),
+            ("opis_karakteristika", "opis"),
+            ("emailovi",),
+            ("telefoni",),
+        )
+        return sum(cls._vrednost_popunjena(dobavljac, polja) for polja in polja_za_ocenu)
+
+    @classmethod
+    def _ruta_leta(cls, dobavljac: dict) -> str:
+        polaziste = str(dobavljac.get("polaziste", "") or "").strip()
+        destinacija = str(dobavljac.get("zemlja_pretrage", "") or "").strip()
+        sadrzaj = " ".join(
+            str(dobavljac.get(polje, "") or "")
+            for polje in ("naziv", "opis", "tekst_sajta", "_upit_pretrage")
+        )
+        normalizovan_sadrzaj = cls._normalizuj_tekst(sadrzaj)
+        datum = re.search(
+            r"\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|"
+            r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+            r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+            r"dec(?:ember)?)\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}\s+"
+            r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+            r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+            r"dec(?:ember)?)(?:\s+\d{4})?)\b",
+            normalizovan_sadrzaj,
+        )
+        datum_kljuceva = f" | {datum.group(0)}" if datum else ""
+        if polaziste and polaziste.casefold() != "nepoznato":
+            ruta_fiksna = cls._normalizuj_tekst(f"{polaziste} to {destinacija}")
+            return f"{ruta_fiksna}{datum_kljuceva}"
+
+        tekst = normalizovan_sadrzaj
+        ruta = re.search(
+            r"\bfrom\s+(.+?)\s+to\s+(.+?)(?=\s+(?:flight|flights|ticket|tickets|"
+            r"airfare|price|prices|direct|nonstop)\b|$)",
+            tekst,
+        )
+        if ruta:
+            return f"{ruta.group(1).strip()} to {ruta.group(2).strip()}{datum_kljuceva}"
+        return (cls._normalizuj_tekst(destinacija) or tekst) + datum_kljuceva
+
     def pronadji_dobavljace(
         self,
         web_agent,
@@ -820,6 +851,9 @@ class OfferAgent(BaseAgent):
             "agencije_lokalne": [],
             "agencije_medjunarodne": [],
             "letovi": [],
+            "trajekti": [],
+            "autobusi": [],
+            "vozovi": [],
             "ostalo": [],
         }
         domeni = []
@@ -832,7 +866,33 @@ class OfferAgent(BaseAgent):
             kategorija: str | None = None,
         ) -> None:
             kategorija = kategorija or self._kategorija_usluge(upit)
+            zahtevi_normalizovani = self._normalizuj_tekst(dodatni_zahtevi)
+            transportni_segment = {
+                "trajekti": r"\b(?:ferry|ferries|trajekt\w*|brod\w*)\b",
+                "autobusi": r"\b(?:bus|buses|autobus\w*|coach|intercity)\b",
+                "vozovi": r"\b(?:train|trains|rail|voz\w*)\b",
+            }.get(kategorija)
+            if transportni_segment and not re.search(
+                transportni_segment,
+                zahtevi_normalizovani,
+            ):
+                kategorija = "ostalo"
             for dobavljac in rezultati:
+                kategorija_rezultata = kategorija
+                tip_sadrzaja = self._tip_sadrzaja_ponude(dobavljac)
+                if tip_sadrzaja == "hoteli" and kategorija in {"letovi", "ostalo"}:
+                    if not self._trazi_putovanja(proizvod, dodatni_zahtevi):
+                        continue
+                    kategorija_rezultata = "hoteli"
+                elif tip_sadrzaja == "letovi" and kategorija in {
+                    "hoteli",
+                    "privatni_smestaj",
+                    "ostalo",
+                }:
+                    if not self._trazi_letove(dodatni_zahtevi):
+                        continue
+                    kategorija_rezultata = "letovi"
+
                 sajt = str(dobavljac.get("sajt", "") or "")
                 if sajt:
                     sajt = self._normalizuj_url_rezultata(sajt)
@@ -841,7 +901,13 @@ class OfferAgent(BaseAgent):
                     not sajt
                     or self._je_oglasni_url(sajt)
                     or not self._rezultat_povezan(
-                        dobavljac, proizvod, zemlja, dodatni_zahtevi, upit, tip, kategorija
+                        dobavljac,
+                        proizvod,
+                        zemlja,
+                        dodatni_zahtevi,
+                        upit,
+                        tip,
+                        kategorija_rezultata,
                     )
                 ):
                     continue
@@ -853,10 +919,10 @@ class OfferAgent(BaseAgent):
                     if zemlja and not postojeci.get("zemlja_pretrage"):
                         postojeci["zemlja_pretrage"] = zemlja
                     prethodna_kategorija = postojeci.get("kategorija_ponude", "ostalo")
-                    if prethodna_kategorija == "ostalo" and kategorija != "ostalo":
+                    if prethodna_kategorija == "ostalo" and kategorija_rezultata != "ostalo":
                         rezultati_po_kategoriji[prethodna_kategorija].remove(postojeci)
-                        postojeci["kategorija_ponude"] = kategorija
-                        rezultati_po_kategoriji.setdefault(kategorija, []).append(postojeci)
+                        postojeci["kategorija_ponude"] = kategorija_rezultata
+                        rezultati_po_kategoriji.setdefault(kategorija_rezultata, []).append(postojeci)
                     continue
                 dobavljac["naziv"] = re.sub(
                     r"\s+", " ",
@@ -864,8 +930,8 @@ class OfferAgent(BaseAgent):
                 ).strip(" -|")
                 dobavljac["zemlja_pretrage"] = zemlja
                 dobavljac["_upit_pretrage"] = upit
-                dobavljac["kategorija_ponude"] = kategorija
-                if kategorija == "letovi":
+                dobavljac["kategorija_ponude"] = kategorija_rezultata
+                if kategorija_rezultata == "letovi":
                     dobavljac["polaziste"] = polaziste.strip() or "nepoznato"
                     if not polaziste.strip():
                         dobavljac["napomena_rute"] = (
@@ -873,7 +939,7 @@ class OfferAgent(BaseAgent):
                         )
                 vidjeni_sajtovi[kljuc] = dobavljac
                 svi_dobavljaci.append(dobavljac)
-                rezultati_po_kategoriji.setdefault(kategorija, []).append(dobavljac)
+                rezultati_po_kategoriji.setdefault(kategorija_rezultata, []).append(dobavljac)
 
         if tip == "proizvod":
             domeni = self.pronadji_direktorijume(local_llm, proizvod)
@@ -891,7 +957,7 @@ class OfferAgent(BaseAgent):
                 dodaj_rezultate(rezultati, zemlja, upit)
 
         elif tip == "usluga":
-            platforme = [
+            domeni = [
                 "booking.com",
                 "airbnb.com",
                 "tripadvisor.com",
@@ -899,14 +965,23 @@ class OfferAgent(BaseAgent):
                 "skyscanner.com",
                 "kayak.com",
             ]
-            domeni = platforme
             upiti_pretrazeni: set[str] = set()
 
+            pocetni_upiti = []
             for zemlja in zemlje:
-                upiti = [
-                    f"site:{platforma} {proizvod} {zemlja}"
-                    for platforma in platforme
-                ]
+                platform_upiti = self.accommodation_agent.platforme(proizvod, zemlja)
+                for upit in platform_upiti:
+                    try:
+                        rezultati = self._pretrazi_upit_usluge(web_agent, upit, zemlja)
+                    except Exception as greska:
+                        print(f"Upozorenje: pretraga nije uspela za '{upit}': {greska}")
+                        rezultati = []
+                    upiti_pretrazeni.add(upit.casefold())
+                    if self._trazi_letove(upit):
+                        rezultati_letova.setdefault(zemlja, []).extend(rezultati)
+                    dodaj_rezultate(rezultati, zemlja, upit)
+
+                upiti = []
                 upiti.extend(
                     self.sastavi_upite_za_usluge(
                         local_llm,
@@ -917,13 +992,19 @@ class OfferAgent(BaseAgent):
                         polaziste=polaziste,
                     )
                 )
-
-                for upit in upiti:
-                    upiti_pretrazeni.add(upit.casefold())
-                    rezultati = web_agent.pretrazi_dobavljace(upit, zemlja=zemlja)
-                    if self._trazi_letove(upit):
-                        rezultati_letova.setdefault(zemlja, []).extend(rezultati)
-                    dodaj_rezultate(rezultati, zemlja, upit)
+                pocetni_upiti.extend(
+                    (upit, zemlja)
+                    for upit in upiti
+                    if upit.casefold() not in upiti_pretrazeni
+                )
+            for upit, zemlja, rezultati in self._pretrazi_upite_paralelno(
+                web_agent,
+                pocetni_upiti,
+            ):
+                upiti_pretrazeni.add(upit.casefold())
+                if self._trazi_letove(upit):
+                    rezultati_letova.setdefault(zemlja, []).extend(rezultati)
+                dodaj_rezultate(rezultati, zemlja, upit)
 
             je_putovanje = self._trazi_putovanja(proizvod, dodatni_zahtevi)
             ciljne_kategorije = []
@@ -932,6 +1013,19 @@ class OfferAgent(BaseAgent):
                 ciljne_kategorije.extend(["agencije_lokalne", "agencije_medjunarodne"])
             if self._trazi_letove(dodatni_zahtevi):
                 ciljne_kategorije.append("letovi")
+            normalizovani_zahtevi = self._normalizuj_tekst(dodatni_zahtevi)
+            if re.search(r"\b(?:ferry|ferries|trajekt\w*|brod\w*)\b", normalizovani_zahtevi):
+                ciljne_kategorije.append("trajekti")
+            if re.search(
+                r"\b(?:bus|buses|autobus\w*|coach|intercity)\b",
+                normalizovani_zahtevi,
+            ):
+                ciljne_kategorije.append("autobusi")
+            if re.search(
+                r"\b(?:train|trains|rail|voz\w*)\b",
+                normalizovani_zahtevi,
+            ):
+                ciljne_kategorije.append("vozovi")
             treba_siriti = (
                 any(
                     len(rezultati_po_kategoriji.get(kategorija, [])) < 2
@@ -941,6 +1035,7 @@ class OfferAgent(BaseAgent):
                 else len(svi_dobavljaci) < 8
             )
             if treba_siriti:
+                prosireni_upiti = []
                 for zemlja in zemlje:
                     upiti = self.sastavi_upite_za_usluge(
                         local_llm,
@@ -955,10 +1050,14 @@ class OfferAgent(BaseAgent):
                         if upit.casefold() in upiti_pretrazeni:
                             continue
                         upiti_pretrazeni.add(upit.casefold())
-                        rezultati = web_agent.pretrazi_dobavljace(upit, zemlja=zemlja)
-                        if self._trazi_letove(upit):
-                            rezultati_letova.setdefault(zemlja, []).extend(rezultati)
-                        dodaj_rezultate(rezultati, zemlja, upit)
+                        prosireni_upiti.append((upit, zemlja))
+                for upit, zemlja, rezultati in self._pretrazi_upite_paralelno(
+                    web_agent,
+                    prosireni_upiti,
+                ):
+                    if self._trazi_letove(upit):
+                        rezultati_letova.setdefault(zemlja, []).extend(rezultati)
+                    dodaj_rezultate(rezultati, zemlja, upit)
 
             for zemlja, rezultati in rezultati_letova.items():
                 kontekst_letova = "\n".join(
@@ -988,11 +1087,12 @@ class OfferAgent(BaseAgent):
 
                 for kompanija in kompanije:
                     upit = f'"{kompanija}" official website flights to {zemlja}'
-                    rezultati = web_agent.pretrazi_dobavljace(upit, zemlja=zemlja)
+                    rezultati = self.transport_agent.pretrazi(web_agent, upit, zemlja)
                     dodaj_rezultate(rezultati, zemlja, upit)
 
         print(f"\nNasla sam {len(svi_dobavljaci)} rezultata. Trazim kontakt, cenu i karakteristike za svaku...")
 
+        neuspeli_browser_urlovi: set[str] = set()
         for d in svi_dobavljaci:
             if tip == "proizvod" and not d.get("emailovi"):
                 naziv = d.get("naziv", "")
@@ -1035,7 +1135,30 @@ class OfferAgent(BaseAgent):
                 sajt_za_citanje = d.get("sajt", "")
                 if sajt_za_citanje:
                     print(f"   (ucitavam sa browserom: {d.get('naziv','')[:50]})")
-                    tekst_browser = web_agent.procitaj_sajt_sa_browserom(sajt_za_citanje)
+                    try:
+                        tekst_browser = web_agent.procitaj_sajt_sa_browserom(
+                            sajt_za_citanje
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Preskacem rezultat %s zbog greske pri ucitavanju: %s",
+                            sajt_za_citanje,
+                            exc,
+                        )
+                        neuspeli_browser_urlovi.add(
+                            self._kljuc_rezultata(sajt_za_citanje)
+                        )
+                        continue
+                    if tekst_browser.startswith("Greska"):
+                        logger.warning(
+                            "Preskacem rezultat %s: %s",
+                            sajt_za_citanje,
+                            tekst_browser,
+                        )
+                        neuspeli_browser_urlovi.add(
+                            self._kljuc_rezultata(sajt_za_citanje)
+                        )
+                        continue
                     if tekst_browser and not tekst_browser.startswith("Greska"):
                         d["tekst_sajta"] = tekst_browser[:4000]
                         tekst_za_ocenu = f"{tekst_za_ocenu} {tekst_browser}"
@@ -1058,13 +1181,16 @@ class OfferAgent(BaseAgent):
                 d["cena_karte"] = "nepoznato"
                 d["tip_leta"] = "nepoznato"
                 d.update(
-                    self._izvuci_podatke_o_letu(
+                    self.transport_agent.izvuci_podatke_o_letu(
                         d,
-                        str(d.get("tekst_sajta", "") or ""),
+                        " ".join(
+                            str(d.get(polje, "") or "")
+                            for polje in ("tekst_sajta", "opis")
+                        ),
                     )
                 )
 
-            ocena_i_recenzije = self._izvuci_ocenu_i_recenzije(
+            ocena_i_recenzije = self.accommodation_agent.izvuci_ocenu_i_recenzije(
                 tekst_za_ocenu
             )
             if ocena_i_recenzije:
@@ -1083,20 +1209,83 @@ class OfferAgent(BaseAgent):
                 else next(iter(d.get("cene", [])), "nepoznato")
             )
 
+        if neuspeli_browser_urlovi:
+            for kategorija, kandidati in rezultati_po_kategoriji.items():
+                rezultati_po_kategoriji[kategorija] = [
+                    kandidat
+                    for kandidat in kandidati
+                    if self._kljuc_rezultata(
+                        str(kandidat.get("sajt", "") or "")
+                    )
+                    not in neuspeli_browser_urlovi
+                ]
+
+        for kategorija, kandidati in rezultati_po_kategoriji.items():
+            po_domenima: dict[str, list[dict]] = {}
+            for kandidat in kandidati:
+                domen = self.osnovni_domen(str(kandidat.get("sajt", "") or ""))
+                po_domenima.setdefault(domen, []).append(kandidat)
+
+            odabrani = []
+            for domen, domen_kandidati in po_domenima.items():
+                if kategorija == "letovi":
+                    po_ruti: dict[str, list[dict]] = {}
+                    for kandidat in domen_kandidati:
+                        ruta = self._ruta_leta(kandidat)
+                        po_ruti.setdefault(ruta, []).append(kandidat)
+                    domen_kandidati = [
+                        max(ruta_kandidati, key=self._informativnost_ponude)
+                        for ruta_kandidati in po_ruti.values()
+                    ]
+                domen_kandidati.sort(
+                    key=self._informativnost_ponude,
+                    reverse=True,
+                )
+                odabrani.extend(domen_kandidati[:2])
+            rezultati_po_kategoriji[kategorija] = odabrani
+
+        prikazani_urlovi = {
+            self._kljuc_rezultata(str(d.get("sajt", "") or ""))
+            for kategorija, kandidati in rezultati_po_kategoriji.items()
+            if kategorija != "ostalo"
+            for d in kandidati
+        }
+        prikazani_domeni = {
+            self.osnovni_domen(str(d.get("sajt", "") or ""))
+            for kategorija, kandidati in rezultati_po_kategoriji.items()
+            if kategorija != "ostalo"
+            for d in kandidati
+        }
+        rezultati_po_kategoriji["ostalo"] = [
+            d
+            for d in rezultati_po_kategoriji.get("ostalo", [])
+            if self._kljuc_rezultata(str(d.get("sajt", "") or "")) not in prikazani_urlovi
+            and self.osnovni_domen(str(d.get("sajt", "") or "")) not in prikazani_domeni
+        ]
+
         redosled_kategorija = [
             "hoteli",
             "privatni_smestaj",
             "agencije_lokalne",
             "agencije_medjunarodne",
             "letovi",
+            "trajekti",
+            "autobusi",
+            "vozovi",
             "ostalo",
         ]
         sortirani_po_kategoriji = []
         for kategorija in redosled_kategorija:
             kategorijski_rezultati = rezultati_po_kategoriji.get(kategorija, [])
-            sortirani_po_kategoriji.extend(
-                self.rangiraj_dobavljace(kategorijski_rezultati, dodatni_zahtevi)
-            )
+            vidjeni_urlovi_u_kategoriji: set[str] = set()
+            for dobavljac in self.rangiraj_dobavljace(
+                kategorijski_rezultati,
+                dodatni_zahtevi,
+            ):
+                kljuc = self._kljuc_rezultata(str(dobavljac.get("sajt", "") or ""))
+                if kljuc and kljuc not in vidjeni_urlovi_u_kategoriji:
+                    vidjeni_urlovi_u_kategoriji.add(kljuc)
+                    sortirani_po_kategoriji.append(dobavljac)
         obradjene_kategorije = set(redosled_kategorija)
         for kategorija, kategorijski_rezultati in rezultati_po_kategoriji.items():
             if kategorija not in obradjene_kategorije:

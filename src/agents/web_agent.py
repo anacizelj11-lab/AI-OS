@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from ddgs import DDGS
@@ -16,9 +17,34 @@ import requests
 from bs4 import BeautifulSoup
 
 
+logger = logging.getLogger(__name__)
+
+
 class WebAgent(BaseAgent):
     """Agent that searches the web using DuckDuckGo and returns top results."""
 
+    _BRENDOVI_PRETRAGE = (
+        "Google Flights",
+        "FlightConnections",
+        "Skyscanner",
+        "Expedia",
+        "Tripadvisor",
+        "Booking.com",
+        "Hotels.com",
+        "Airbnb",
+        "Kayak",
+        "Momondo",
+        "Kiwi",
+        "eSky",
+        "Wizz Air",
+        "eDreams",
+        "AEGEAN",
+        "Aegean Airways",
+        "Agoda",
+        "Vrbo",
+        "Trivago",
+        "Hostelworld",
+    )
     _POZIVNI_BROJEVI = {
         "1", "7", "20", "27", "30", "31", "32", "33", "34", "36", "39",
         "40", "41", "43", "44", "45", "46", "47", "48", "49", "90",
@@ -118,20 +144,25 @@ class WebAgent(BaseAgent):
         return "\n".join(lines)
     def procitaj_sajt(self, url: str) -> str:
         """Otvara konkretan sajt i vraca citljiv tekst sa stranice (bez HTML oznaka)."""
+        _, tekst = self._procitaj_sajt_i_naslov(url)
+        return tekst
+
+    def _procitaj_sajt_i_naslov(self, url: str) -> tuple[str, str]:
         try:
             odgovor = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             odgovor.raise_for_status()
         except Exception as exc:
-            return f"Greska pri otvaranju sajta: {exc}"
+            return "", f"Greska pri otvaranju sajta: {exc}"
 
         soup = BeautifulSoup(odgovor.text, "html.parser")
+        naslov = self._izvuci_naslov(soup)
 
         for deo in soup(["script", "style"]):
             deo.decompose()
 
         tekst = soup.get_text(separator="\n")
         linije = [linija.strip() for linija in tekst.split("\n") if linija.strip()]
-        return "\n".join(linije)
+        return naslov, "\n".join(linije)
 
     def izvuci_kontakt_i_cene(self, tekst: str, zemlja: str = "") -> dict:
         """Trazi email adrese, telefone i pominjanja cena u datom tekstu."""
@@ -188,9 +219,45 @@ class WebAgent(BaseAgent):
 
     @staticmethod
     def ocisti_naslov(naslov: str) -> str:
-        """Zadrzi samo prvi naslov kada pretrazivac spoji vise naslova separatorom |."""
-        naslov = re.split(r"\s*\|\s*", naslov, maxsplit=1)[0]
+        """Zadrzi samo glavni deo naslova umesto spojenih rezultata."""
+        naslov = re.split(r"\s*(?:\||•|·|…|\.{3,})\s*", naslov, maxsplit=1)[0]
         return re.sub(r"\s+", " ", naslov).strip(" -|")
+
+    @staticmethod
+    def _izvuci_naslov(soup: BeautifulSoup) -> str:
+        for oznaka in ("h1", "title"):
+            element = soup.find(oznaka)
+            if element:
+                naslov = WebAgent.ocisti_naslov(element.get_text(" ", strip=True))
+                if naslov:
+                    return naslov
+        return ""
+
+    @classmethod
+    def _naslov_pretrage_je_spojen(cls, naslov: str) -> bool:
+        """Prepoznaj DDG rich snippets koji su spojili vise rezultata u naslov."""
+        if len(re.findall(r"[$€]\s*\d[\d,.]*", naslov)) > 1:
+            return True
+
+        pogodci = []
+        sumnjiva_granica = False
+        for brend in cls._BRENDOVI_PRETRAGE:
+            for pogodak in re.finditer(re.escape(brend), naslov, re.IGNORECASE):
+                pogodci.append(brend.casefold())
+                kraj = pogodak.end()
+                pocetak = pogodak.start()
+                if (
+                    kraj < len(naslov)
+                    and naslov[kraj].isupper()
+                    and (naslov[kraj - 1].islower() or naslov[kraj - 1].isdigit())
+                ) or (
+                    pocetak > 0
+                    and naslov[pocetak].isupper()
+                    and naslov[pocetak - 1].isdigit()
+                ):
+                    sumnjiva_granica = True
+
+        return len(pogodci) > 1 and sumnjiva_granica
 
     @staticmethod
     def je_oglasni_url(url: str) -> bool:
@@ -231,13 +298,17 @@ class WebAgent(BaseAgent):
             dobavljaci = []
             for r in results:
                 naziv = self.ocisti_naslov(r.get("title", "Bez naslova"))
+                if self._naslov_pretrage_je_spojen(naziv):
+                    continue
                 url = r.get("href", "")
                 opis = r.get("body", "")
 
                 if not url or self.je_oglasni_url(url):
                     continue
 
-                tekst_sajta = self.procitaj_sajt(url)
+                naslov_sajta, tekst_sajta = self._procitaj_sajt_i_naslov(url)
+                if naslov_sajta:
+                    naziv = naslov_sajta
                 if tekst_sajta.startswith("Greska"):
                     podaci = {"emailovi": [], "telefoni": [], "cene": []}
                 else:
@@ -275,21 +346,42 @@ class WebAgent(BaseAgent):
     def procitaj_sajt_sa_browserom(self, url: str, cekanje_ms: int = 4000) -> str:
         """Otvara sajt u pravom (nevidljivom) browseru da bi se ucitao sadrzaj generisan JavaScript-om (npr. cene na Booking/Airbnb)."""
         try:
-            from playwright.sync_api import sync_playwright
+            from playwright.sync_api import (
+                Error as PlaywrightError,
+                TimeoutError as PlaywrightTimeoutError,
+                sync_playwright,
+            )
         except ImportError:
             return "Greska: playwright nije instaliran."
 
+        browser = None
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                stranica = browser.new_page()
-                stranica.goto(url, timeout=20000)
-                stranica.wait_for_timeout(cekanje_ms)
-                tekst = stranica.inner_text("body")
-                browser.close()
-                return tekst
-        except Exception as e:
-            return f"Greska: {e}"
+                try:
+                    stranica = browser.new_page()
+                    stranica.goto(url, timeout=20000)
+                    stranica.wait_for_timeout(cekanje_ms)
+                    return stranica.inner_text("body")
+                except (PlaywrightTimeoutError, PlaywrightError, TimeoutError) as exc:
+                    logger.warning("Playwright nije uspeo da ucita %s: %s", url, exc)
+                    return f"Greska pri ucitavanju sajta: {exc}"
+                except Exception as exc:
+                    logger.warning("Neocekivana greska pri ucitavanju %s: %s", url, exc)
+                    return f"Greska pri ucitavanju sajta: {exc}"
+                finally:
+                    if browser is not None:
+                        try:
+                            browser.close()
+                        except Exception as exc:
+                            logger.warning(
+                                "Neuspesno zatvaranje browsera za %s: %s",
+                                url,
+                                exc,
+                            )
+        except Exception as exc:
+            logger.warning("Playwright sesija nije uspela za %s: %s", url, exc)
+            return f"Greska pri otvaranju browsera: {exc}"
     def pronadji_zvanicni_sajt(self, naziv: str, local_llm=None, izbegavaj_domene: list[str] | None = None) -> dict | None:
         """Pretrazi ime firme da nadje njen PRAVI zvanicni sajt (van B2B direktorijuma i oglasa) i izvuce kontakt."""
         marketplace_domeni = [

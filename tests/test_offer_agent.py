@@ -1,6 +1,8 @@
 import re
+from threading import Barrier, current_thread
 
 from src.agents.offer_agent import OfferAgent
+from src.agents.transport_agent import TransportAgent
 from src.agents.web_agent import WebAgent
 
 
@@ -104,7 +106,7 @@ class FakeWebAgent:
         return []
 
     def procitaj_sajt_sa_browserom(self, sajt):
-        return "Live price: €149" if "airbnb.com" in sajt else "Greska: test ne ucitava stranice"
+        return "Live price: €149" if "airbnb.com" in sajt else "Loaded page."
 
     @staticmethod
     def izvuci_kontakt_i_cene(tekst, zemlja=""):
@@ -433,6 +435,56 @@ def test_flight_queries_include_origin_and_local_language_for_serbian_origins():
     assert "letovi iz Belgrade za Greece Skiathos" in upiti
 
 
+def test_service_agent_groups_search_concurrently_and_isolates_query_errors(capsys):
+    offer_agent = OfferAgent()
+    barrier = Barrier(3)
+    threads = set()
+
+    class ConcurrentWebAgent:
+        def pretrazi_dobavljace(self, upit, zemlja=""):
+            threads.add(current_thread().name)
+            barrier.wait(timeout=3)
+            if "travel agency" in upit:
+                raise RuntimeError("simulated agency search failure")
+            return [{"naziv": upit, "sajt": f"https://result-{len(threads)}.example"}]
+
+    upiti = [
+        ("site:booking.com hotel Greece", "Greece"),
+        ("travel agency Greece package deals vacation", "Greece"),
+        ("site:skyscanner.com flights to Greece", "Greece"),
+    ]
+    rezultati = offer_agent._pretrazi_upite_paralelno(ConcurrentWebAgent(), upiti)
+
+    assert len(threads) == 3
+    assert len(rezultati) == 3
+    assert rezultati[0][2]
+    assert rezultati[1][2] == []
+    assert rezultati[2][2]
+    assert "simulated agency search failure" in capsys.readouterr().out
+
+
+def test_transport_agent_builds_flight_ferry_bus_and_train_queries():
+    upiti = TransportAgent.sastavi_upite(
+        "Greece Skiathos",
+        polaziste="Belgrade",
+        dodatni_zahtevi="flight tickets, ferry, bus and train",
+    )
+
+    assert "site:esky.pl flights from Belgrade to Greece Skiathos" in upiti
+    assert "site:esky.ba flights from Belgrade to Greece Skiathos" in upiti
+    assert "site:esky.rs flights from Belgrade to Greece Skiathos" in upiti
+    assert "site:edreams.com flights from Belgrade to Greece Skiathos" in upiti
+    assert "site:wizzair.com flights from Belgrade to Greece Skiathos" in upiti
+    assert "site:ferryhopper.com ferry Greece Skiathos" in upiti
+    assert "site:directferries.com ferry Greece Skiathos" in upiti
+    assert "site:ferries.gr ferry Greece Skiathos" in upiti
+    assert "site:getbybus.com bus Greece Skiathos" in upiti
+    assert "site:flixbus.com bus Greece Skiathos" in upiti
+    assert "site:busbud.com bus Greece Skiathos" in upiti
+    assert "site:thetrainline.com train Greece Skiathos" in upiti
+    assert "site:omio.com train Greece Skiathos" in upiti
+
+
 def test_flight_details_extract_airline_and_stop_type():
     offer_agent = OfferAgent()
     details = offer_agent._izvuci_podatke_o_letu(
@@ -448,6 +500,149 @@ def test_flight_details_extract_airline_and_stop_type():
         "tip_leta": "Let sa presedanjem",
         "cena_karte": "€189",
     }
+
+
+def test_flight_details_use_airline_from_title_or_url_when_route_is_present():
+    offer_agent = OfferAgent()
+    details = offer_agent._izvuci_podatke_o_letu(
+        {
+            "naziv": "AEGEAN",
+            "sajt": "https://en.aegeanair.com/flights",
+            "zemlja_pretrage": "Greece Skiathos",
+        },
+        "Flights from Belgrade to Skiathos, Greece. Direct flight €189.",
+    )
+
+    assert details == {
+        "avio_kompanija": "Aegean Airlines",
+        "tip_leta": "Direktan let",
+        "cena_karte": "€189",
+    }
+
+
+def test_category_results_limit_domains_remove_other_duplicates_and_deduplicate_flights():
+    offer_agent = OfferAgent()
+    offer_agent.odredi_tip_potrage = lambda *args: "usluga"
+
+    class CategoryWebAgent(FakeWebAgent):
+        def pretrazi_dobavljace(self, upit, broj_rezultata=5, zemlja=""):
+            self.queries.append(upit)
+            if upit.startswith("site:booking.com"):
+                return [
+                    {
+                        "naziv": "Skiathos Hotel Basic",
+                        "sajt": "https://www.booking.com/holidays/basic",
+                        "opis": "Vacation hotel in Greece Skiathos",
+                    },
+                    {
+                        "naziv": "Skiathos Hotel With Price",
+                        "sajt": "https://www.booking.com/city/with-price",
+                        "opis": "Vacation hotel in Greece Skiathos",
+                    },
+                    {
+                        "naziv": "Skiathos Hotel With Rating",
+                        "sajt": "https://www.booking.com/beach/with-rating",
+                        "opis": "Vacation hotel in Greece Skiathos",
+                    },
+                ]
+            if upit.startswith("site:tripadvisor.com"):
+                return [
+                    {
+                        "naziv": f"Skiathos Tripadvisor Hotel {index}",
+                        "sajt": f"https://www.tripadvisor.com/accommodation/{index}",
+                        "opis": "Vacation hotel in Greece Skiathos",
+                    }
+                    for index in range(3)
+                ]
+            if upit.startswith("site:skyscanner.com"):
+                return [
+                    {
+                        "naziv": f"Flights from Belgrade to Skiathos option {index}",
+                        "sajt": f"https://www.skyscanner.com/routes/beg/jsi/{index}",
+                        "opis": (
+                            "Flights from Belgrade to Skiathos Greece on June 20, 2027"
+                            if index == 2
+                            else "Flights from Belgrade to Skiathos Greece"
+                        ),
+                    }
+                    for index in range(3)
+                ]
+            if upit == "vacation Greece Skiathos official website":
+                return [
+                    {
+                        "naziv": "Booking.com beach hotel",
+                        "sajt": "https://www.booking.com/holidays/duplicate",
+                        "opis": "Vacation hotel in Greece Skiathos",
+                    },
+                    {
+                        "naziv": "Independent vacation offer",
+                        "sajt": "https://independent.example/offer",
+                        "opis": "Vacation offer in Greece Skiathos",
+                    },
+                ]
+            return []
+
+        def procitaj_sajt_sa_browserom(self, sajt):
+            if "with-price" in sajt:
+                return "Vacation hotel in Skiathos €99"
+            if "with-rating" in sajt:
+                return "Vacation hotel in Skiathos. Guest rating 9.4/10 based on 120 reviews."
+            return "Vacation offer in Greece Skiathos."
+
+    web_agent = CategoryWebAgent()
+    offer_agent.opisi_dobavljaca = lambda *args: {
+        "zemlja": "Greece",
+        "opis_karakteristika": "Vacation hotel",
+        "cena": "nepoznato",
+    }
+
+    ponude = offer_agent.pronadji_dobavljace(
+        web_agent,
+        FakeLlm(""),
+        "vacation",
+        zadata_zemlja="Greece Skiathos",
+        dodatni_zahtevi="flight tickets",
+        polaziste="Belgrade",
+    )
+
+    kategorije = {}
+    for ponuda in ponude:
+        kategorije.setdefault(ponuda["kategorija_ponude"], []).append(ponuda)
+
+    for kategorija, rezultati in kategorije.items():
+        if kategorija == "ostalo":
+            continue
+        domeni = [
+            offer_agent.osnovni_domen(ponuda["sajt"])
+            for ponuda in rezultati
+        ]
+        assert all(domeni.count(domen) <= 2 for domen in set(domeni))
+
+    ostali_domeni = {
+        offer_agent.osnovni_domen(ponuda["sajt"])
+        for ponuda in kategorije.get("ostalo", [])
+    }
+    prikazani_domeni = {
+        offer_agent.osnovni_domen(ponuda["sajt"])
+        for kategorija, rezultati in kategorije.items()
+        if kategorija != "ostalo"
+        for ponuda in rezultati
+    }
+    assert ostali_domeni.isdisjoint(prikazani_domeni)
+
+    booking_rezultati = [
+        ponuda for ponuda in kategorije["hoteli"]
+        if offer_agent.osnovni_domen(ponuda["sajt"]) == "booking.com"
+    ]
+    assert len(booking_rezultati) == 2
+    assert any("€99" in str(ponuda.get("cena")) for ponuda in booking_rezultati)
+    assert any("9.4/10" in ponuda.get("ocena_i_recenzije", "") for ponuda in booking_rezultati)
+
+    skyscanner_rezultati = [
+        ponuda for ponuda in kategorije["letovi"]
+        if offer_agent.osnovni_domen(ponuda["sajt"]) == "skyscanner.com"
+    ]
+    assert len(skyscanner_rezultati) == 2
 
 
 def test_flight_company_is_not_guessed_without_route_and_fare_context():
@@ -573,6 +768,15 @@ def test_service_search_preserves_results_for_each_offer_category():
                 result("Skiathos Hotel One", "hotel-one.example", "Hotel in Greece Skiathos", "stay"),
                 result("Skiathos Hotel Two", "hotel-two.example", "Hotel in Greece Skiathos", "stay"),
             ]
+        if upit.startswith("site:expedia.com"):
+            return [
+                result(
+                    "Skiathos Expedia Hotel",
+                    "expedia-hotel.example",
+                    "Hotel accommodation in Greece Skiathos",
+                    "stay",
+                )
+            ]
         if upit.startswith("site:airbnb.com"):
             return [
                 result("Skiathos private apartment", "host-one.example", "Private apartment in Greece Skiathos", "one"),
@@ -594,7 +798,21 @@ def test_service_search_preserves_results_for_each_offer_category():
             ]
         if upit.startswith("site:kayak.com"):
             return [
-                result("Kayak flights to Skiathos", "kayak.com", "Flights from Athens to Skiathos Greece", "routes")
+                {
+                    "naziv": "Last Minute Hotel Deals in Skiathos from $29/day - KAYAK",
+                    "sajt": "https://www.kayak.com/hotels/Skiathos,Greece",
+                    "opis": "Compare hotel deals and accommodation in Skiathos, Greece.",
+                },
+                {
+                    "naziv": "Flights from Belgrade to Skiathos | KAYAK",
+                    "sajt": "https://www.kayak.com/flights/BEG-JSI",
+                    "opis": "Compare flight deals from Belgrade to Skiathos, Greece.",
+                },
+                {
+                    "naziv": "Flights from Belgrade to Skiathos | KAYAK",
+                    "sajt": "https://www.kayak.com/flights/BEG-JSI",
+                    "opis": "Compare flight deals from Belgrade to Skiathos, Greece.",
+                },
             ]
         if upit.startswith('"Aegean Airways" official website'):
             return [
@@ -610,7 +828,7 @@ def test_service_search_preserves_results_for_each_offer_category():
             return ""
 
     web_agent.pretrazi_dobavljace = search
-    web_agent.procitaj_sajt_sa_browserom = lambda _sajt: "Greska: no page"
+    web_agent.procitaj_sajt_sa_browserom = lambda _sajt: "Loaded page."
     offer_agent.opisi_dobavljaca = lambda *args: {
         "zemlja": "Greece",
         "opis_karakteristika": "Travel offer",
@@ -637,14 +855,97 @@ def test_service_search_preserves_results_for_each_offer_category():
     assert len([d for d in ponude if d["kategorija_ponude"] == "privatni_smestaj"]) >= 2
     assert len([d for d in ponude if d["kategorija_ponude"] == "agencije_lokalne"]) >= 2
     assert len([d for d in ponude if d["kategorija_ponude"] == "agencije_medjunarodne"]) >= 2
+    kayak_hotel = [
+        d
+        for d in ponude
+        if d["sajt"] == "https://www.kayak.com/hotels/Skiathos,Greece"
+    ]
+    assert len(kayak_hotel) == 1
+    assert kayak_hotel[0]["kategorija_ponude"] == "hoteli"
     flight_results = [d for d in ponude if d["kategorija_ponude"] == "letovi"]
     assert len(flight_results) >= 3
     flight_domains = {offer_agent.osnovni_domen(d["sajt"]) for d in flight_results}
     assert "skyscanner.com" in flight_domains
     assert "kayak.com" in flight_domains
     assert "aegean.example" in flight_domains
+    assert sum(d["sajt"] == "https://www.kayak.com/flights/BEG-JSI" for d in flight_results) == 1
+    redosled_kategorija = [
+        "hoteli",
+        "privatni_smestaj",
+        "agencije_lokalne",
+        "agencije_medjunarodne",
+        "letovi",
+        "trajekti",
+        "autobusi",
+        "vozovi",
+        "ostalo",
+    ]
+    kategorije_po_rezultatu = [d["kategorija_ponude"] for d in ponude]
+    redosled = {kategorija: index for index, kategorija in enumerate(redosled_kategorija)}
+    assert kategorije_po_rezultatu == sorted(
+        kategorije_po_rezultatu,
+        key=lambda kategorija: redosled[kategorija],
+    )
+    assert sum(
+        index == 0 or kategorija != kategorije_po_rezultatu[index - 1]
+        for index, kategorija in enumerate(kategorije_po_rezultatu)
+    ) == len(set(kategorije_po_rezultatu))
+    assert sum(d["kategorija_ponude"] == "hoteli" for d in ponude) >= 4
     assert all(
         "airbnb.com" not in d["sajt"] and "booking.com" not in d["sajt"]
         for d in ponude
         if d["kategorija_ponude"].startswith("agencije_")
     )
+
+
+def test_browser_load_failure_skips_one_offer_and_continues_with_next(caplog):
+    offer_agent = OfferAgent()
+    offer_agent.odredi_tip_potrage = lambda *args: "usluga"
+    offer_agent.sastavi_upite_za_usluge = lambda *args, **kwargs: []
+    web_agent = FakeWebAgent()
+    web_agent.pretrazi_dobavljace = lambda upit, broj_rezultata=5, zemlja="": (
+        [
+            {
+                "naziv": "Skiathos Hotel One",
+                "sajt": "https://hotel-one.example/skiathos",
+                "opis": "Hotel accommodation in Greece Skiathos",
+            },
+            {
+                "naziv": "Skiathos Hotel Two",
+                "sajt": "https://hotel-two.example/skiathos",
+                "opis": "Hotel accommodation in Greece Skiathos",
+            },
+        ]
+        if upit.startswith("site:booking.com")
+        else []
+    )
+    browser_urls = []
+
+    def read_with_browser(url):
+        browser_urls.append(url)
+        if len(browser_urls) == 1:
+            raise TimeoutError("peer closed connection without TLS close_notify")
+        return "Loaded hotel page."
+
+    web_agent.procitaj_sajt_sa_browserom = read_with_browser
+    offer_agent.opisi_dobavljaca = lambda *args: {
+        "zemlja": "Greece",
+        "opis_karakteristika": "Hotel accommodation",
+        "cena": "nepoznato",
+    }
+
+    ponude = offer_agent.pronadji_dobavljace(
+        web_agent,
+        FakeLlm(""),
+        "vacation",
+        zadata_zemlja="Greece Skiathos",
+    )
+
+    assert browser_urls == [
+        "https://hotel-one.example/skiathos",
+        "https://hotel-two.example/skiathos",
+    ]
+    assert [ponuda["sajt"] for ponuda in ponude] == [
+        "https://hotel-two.example/skiathos"
+    ]
+    assert "Preskacem rezultat" in caplog.text

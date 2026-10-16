@@ -4,6 +4,8 @@ from src.agents.file_agent import FileAgent
 from src.agents.web_agent import WebAgent
 from src.agents.email_agent import EmailAgent
 from src.agents.offer_agent import OfferAgent
+from src.agents.destination_info_agent import DestinationInfoAgent
+from src.agents.research_agent import ResearchAgent
 
 orchestrator = Orchestrator()
 orchestrator.register_agent("local_llm", LocalLLMAgent())
@@ -11,6 +13,8 @@ orchestrator.register_agent("file_agent", FileAgent())
 orchestrator.register_agent("web_agent", WebAgent())
 orchestrator.register_agent("offer_agent", OfferAgent())
 orchestrator.register_agent("email_agent", EmailAgent())
+orchestrator.register_agent("destination_info_agent", DestinationInfoAgent())
+orchestrator.register_agent("research_agent", ResearchAgent())
 
 print("AI-OS je pokrenut. Ukucaj 'kraj' za izlaz.")
 
@@ -156,6 +160,12 @@ while True:
         local_llm = orchestrator.agents["local_llm"]
         email_agent = orchestrator.agents["email_agent"]
         offer_agent = orchestrator.agents["offer_agent"]
+        drzavljanstvo = ""
+        je_putovanje = offer_agent._trazi_putovanja(proizvod, dodatni_zahtevi)
+        if je_putovanje:
+            drzavljanstvo = input(
+                "Kog si drzavljanstva / sa kojim pasosem putujes? (ili Enter ako nije vazno): "
+            ).strip()
         polaziste = ""
         if offer_agent._trazi_letove(dodatni_zahtevi):
             polaziste = input(
@@ -184,6 +194,9 @@ while True:
             "agencije_lokalne": "Lokalne/regionalne turisticke agencije",
             "agencije_medjunarodne": "Medjunarodne turisticke agencije",
             "letovi": "Avionske karte i letovi",
+            "trajekti": "Trajekti",
+            "autobusi": "Autobusi i medjugradski prevoz",
+            "vozovi": "Vozovi",
             "ostalo": "Ostale ponude",
         }
         prethodna_kategorija = None
@@ -218,6 +231,39 @@ while True:
                 print(f"   Napomena: {d['napomena_rute']}")
             print(f"   Sajt: {d.get('zvanicni_sajt') or d.get('sajt','')}")
             print()
+
+        if je_putovanje:
+            destinacija_agent = orchestrator.agents["destination_info_agent"]
+            destinacija = zemlja.strip() or next(
+                (
+                    str(d.get("zemlja_pretrage", "")).strip()
+                    for d in dobavljaci
+                    if d.get("zemlja_pretrage")
+                ),
+                "",
+            )
+            if destinacija:
+                print("\nPrikupljam informacije o destinaciji...")
+                pregled_destinacije = destinacija_agent.istrazi(
+                    web_agent,
+                    local_llm,
+                    destinacija,
+                    period=dodatni_zahtevi,
+                    drzavljanstvo=drzavljanstvo,
+                )
+                print("\n--- INFORMACIJE O DESTINACIJI ---")
+                print(pregled_destinacije)
+                print("---------------------------------")
+
+        if offer_agent.odredi_tip_potrage(local_llm, proizvod) == "proizvod":
+            istrazivanje = input(
+                "\nDa li zelis dublju analizu/poredjenje ovih opcija? (da/ne): "
+            ).strip().lower()
+            if istrazivanje == "da":
+                research_agent = orchestrator.agents["research_agent"]
+                print("\n--- DUBLJA ANALIZA PROIZVODA ---")
+                print(research_agent.istrazi(web_agent, local_llm, proizvod, dobavljaci))
+                print("--------------------------------")
 
         izbor = input(
             "Unesi brojeve firmi/smestaja kojima zelis da posaljes upit (odvojeno zarezom, npr. 1,3), "
