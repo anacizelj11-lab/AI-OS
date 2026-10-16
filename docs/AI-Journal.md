@@ -157,3 +157,35 @@ Dogovoreno: ne prelazimo na sledeci projekat (npr. BookAgent) dok OfferAgent ne 
 2. Analizirati zasto B2B direktorijum deo daje losije rezultate od pretrage po zemljama i odluciti da li ga smanjiti/ukloniti ili dodatno filtrirati.
 3. Proveriti i popraviti email kod Halio Coffee.
 4. (opciono, ako bude vremena) Poceti razmisljanje o implementaciji Planer/Instinct sloju.
+
+## 16.10.2026.
+
+### Sta je uradjeno
+- Veliki arhitekturni refaktor: OfferAgent razdvojen (cista strukturna izmena, bez promene ponasanja) na specijalizovane agente:
+  - AccommodationAgent - hoteli + privatni smestaj (Booking, Airbnb, TripAdvisor, nezavisni hoteli, Houfy/OwnerDirect/RentByOwner/SimplyOwners).
+  - AgencyAgent - lokalne/regionalne i medjunarodne turisticke agencije.
+  - TransportAgent - avionske karte + prosireno na trajekte, autobuse/medjugradski prevoz i vozove.
+  - OfferAgent ostaje "dirigent" - poziva gornja tri agenta PARALELNO (threading, izolacija gresaka po agentu) i spaja/deduplicira rezultate.
+- Dva nova agenta dodata:
+  - DestinationInfoAgent - vreme, viza/ulazak (koristi drzavljanstvo), valuta/kurs, znamenitosti, bezbednost, lokalni prevoz - sa citatima [N] povezanim na stvarne izvore u "Izvori:" sekciji.
+  - ResearchAgent - opciono, na zahtev korisnika, dubinsko poredjenje proizvoda (specifikacije, recenzije, cene, prednosti/mane). Pokrece se preko nove main.py komande "istrazi".
+- main.py prosiren sa dva nova opciona pitanja: polaziste (grad polaska, za rute letova) i drzavljanstvo (pasos/drzavljanstvo, za DestinationInfoAgent).
+- Niz bagova pronadjenih kroz vise rundi zivog testiranja i ispravljenih (preko 30 testova prolazi):
+  1. Mesanje jezika (booking.com .sr.html/.sl.html vs .en-gb.html) - popravljeno normalizacijom lokal-sufiksa u URL-u.
+  2. Pretrpanost istim domenom (booking.com 5-7x u Hoteli) - popravljeno capping-om po domenu + boljim dedup-om.
+  3. Avio-kompanija pogresno pripisivana - popravljeno, trazi se da ime avio-kompanije i ruta/cena budu u istom kontekstu, inace "nepoznato".
+  4. Citati/izvori u DestinationInfoAgent bez liste izvora - popravljeno, sada postoji "Izvori:" sekcija.
+  5. Zbrkan/spojen naslov (vise naslova/sajtova slepljeno u jedan string) - popravljeno i u web_agent.py ekstrakciji i u detekciji spojenih DDG naslova.
+  6. Duplikat URL-a u istoj kategoriji - popravljeno finalnim cross-kategorijskim dedup prolazom.
+  7. Kayak hotel rezultat pogresno u kategoriji Letovi - popravljeno, kategorizacija po stvarnom sadrzaju stranice.
+  8. Zaglavlja kategorija fragmentisana/ponavljana - popravljeno, jedno zaglavlje po kategoriji.
+  9. Program se rusio na mrezne/Playwright greske (TLS, timeout, HTTP2 protocol error) - popravljeno, greske se hvataju, ta jedna stranica se preskace, program nastavlja.
+- Finalni ziv test (20.jun 2027, Greece/Skiathos, Beograd polaziste, srpsko drzavljanstvo) prosao cisto do kraja: 53 rezultata, kategorije uredno grupisane, bez spojenih naslova, bez duplikata, citati/izvori ispravni.
+- Sve izmene commit-ovane i push-ovane na GitHub (commit 5ffcbbf), 11 fajlova, +1728/-242.
+- Usput resen i operativni problem: Playwright se izgubio tokom sesije, ponovo instaliran (pip install playwright + playwright install chromium), i resen Windows Firewall blok za chrome-headless-shell.exe.
+
+### Otvoreno / za sledeci put
+- Testirati slanje email-a (EmailAgent) selektovanim dobavljacima pod novim sistemom.
+- Testirati ResearchAgent (dubinsko poredjenje proizvoda) sa stvarnom "istrazi" komandom.
+- Sitnije: povremeno formatiranje cene bez zareza/tacke (npr. "34.964RSD").
+- Stara otvorena pitanja (B2B direktorijum kvalitet za proizvode, Halio Coffee email, Planer/Instinct sloj) i dalje cekaju.
